@@ -33,17 +33,19 @@
     "package": "vsce package",
     "vscode:prepublish": "pnpm run build"
   },
-  "dependencies": {
-    "cheerio": "^1.2.0"
-  },
   "devDependencies": {
     "@types/node": "^26.6.6",
     "@types/vscode": "1.100.0",
+    "@types/ws": "^8.18.2",
     "@vscode/vsce": "^4.1.0",
     "esbuild": "^0.28.2",
     "oxlint": "^1.90.0",
     "prettier": "^3.9.10",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@xterm/headless": "^6.0.0",
+    "ws": "^8.22.1"
   }
 }
