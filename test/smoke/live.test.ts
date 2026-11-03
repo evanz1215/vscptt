@@ -1,91 +1,110 @@
 import { describe, expect, it } from 'vitest';
-import { CommandQueue } from '../../src/core/queue/commandQueue';
-import { waitFor } from '../../src/core/queue/waitFor';
-import { waitForQuiet } from '../../src/core/terminal/settle';
-import { Terminal } from '../../src/core/terminal/terminal';
-import type { CloseInfo } from '../../src/core/transport/transport';
+import { DuplicateLoginDeclinedError } from '../../src/core/errors';
+import { PttService } from '../../src/core/service';
+import { Session } from '../../src/core/session/session';
 import { connectWs } from '../../src/core/transport/wsTransport';
 
-// Opt-in: talks to the real PTT. Never runs in CI or a plain `pnpm test`.
+// Opt-in: talks to the real PTT and logs in with a real account. Never runs in CI or a plain `pnpm test`.
 //   PTT_LIVE=1 PTT_USER=<id> PTT_PASS=<password> pnpm exec vitest run test/smoke
+// Read-only. A duplicate-login prompt is always answered "keep" so no other connection is logged out. PTT then
+// closes this connection, which is a property of the account's state, not a failure of the code: the test is
+// skipped with a reason instead of passing or failing.
 const live = process.env.PTT_LIVE === '1' && !!process.env.PTT_USER && !!process.env.PTT_PASS;
+const BOARD = process.env.PTT_BOARD ?? 'Soft_Job';
 
 describe.skipIf(!live)('live PTT smoke test', () => {
-  it('logs in, reaches the main menu, and logs out cleanly', { timeout: 90_000 }, async () => {
-    const user = process.env.PTT_USER!;
-    const pass = process.env.PTT_PASS!;
+  it(
+    'logs in, reads favorites, a board (two pages), an article and a pinned one, then logs out',
+    { timeout: 120_000 },
+    async ({ skip }) => {
+      const user = process.env.PTT_USER!;
+      const pass = process.env.PTT_PASS!;
 
-    const terminal = new Terminal({ encoding: 'big5' }); // the gateway starts in Big5
-    const transport = await connectWs();
-    transport.onData((d) => void terminal.write(d));
-    const closed = new Promise<CloseInfo>((resolve) => transport.onClose(resolve));
-    const queue = new CommandQueue();
+      const session = new Session(await connectWs(), { duplicateSession: 'keep' });
+      const service = new PttService(session);
 
-    try {
-      await waitFor(terminal, (t) => t.text().includes('guest'), {
-        timeoutMs: 10_000,
-        description: 'login prompt',
-      });
-
-      await queue.run(async () => {
-        terminal.setEncoding('utf-8'); // a trailing comma switches the session to UTF-8
-        transport.send(`${user},\r`);
-        // Match the full prompt: the Big5 splash also contains "忘記密碼可參考…", which would match too early.
-        await waitFor(terminal, (t) => t.text().includes('請輸入您的密碼'), {
-          timeoutMs: 10_000,
-          description: 'password prompt',
-        });
-      });
-
-      await queue.run(async () => {
-        transport.send(`${pass}\r`);
-        for (let step = 0; step < 6; step++) {
-          const screen = await waitFor(
-            terminal,
-            (t) => {
-              if (t.line(0).includes('主功能表')) return 'menu';
-              if (t.text().includes('重複登入')) return 'duplicate';
-              if (t.text().includes('任意鍵')) return 'anykey';
-              return false;
-            },
-            { timeoutMs: 20_000, description: 'a post-login screen' }
-          );
-          if (screen === 'menu') {
-            return;
+      try {
+        try {
+          await service.login({ username: user, password: pass });
+        } catch (error) {
+          if (error instanceof DuplicateLoginDeclinedError) {
+            skip('the account is already logged in elsewhere and the other connection was kept');
           }
-          transport.send(screen === 'duplicate' ? 'n\r' : ' '); // never kick another session
-          await waitForQuiet(terminal, { quietMs: 200 });
+          throw error;
         }
-        throw new Error('did not reach the main menu');
-      });
+        expect(service.state).toBe('ready');
+        expect(session.lines.join('\n')).not.toContain(pass);
 
-      expect(terminal.line(0)).toContain('主功能表');
-      expect(terminal.text()).not.toContain(pass);
+        // favorites
+        const favorites = await service.getFavorites();
+        expect(Array.isArray(favorites)).toBe(true);
+        for (const f of favorites) {
+          expect(f.name).toMatch(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/);
+        }
 
-      await queue.run(async () => {
-        transport.send('G\r');
-        await waitFor(terminal, (t) => t.text().includes('您確定要離開'), {
-          timeoutMs: 10_000,
-          description: 'logout confirmation',
+        // entering boards: a real one, one that does not exist
+        expect(await service.openBoard(BOARD)).toBe(true);
+        expect(await service.openBoard('NoSuchBoardZzqx')).toBe(false);
+
+        // the latest page and the one after it join without a gap
+        const latest = await service.getBoardPage(BOARD);
+        expect(latest.board.toLowerCase()).toBe(BOARD.toLowerCase());
+        expect(latest.articles.length).toBeGreaterThanOrEqual(10);
+        const numbers = latest.articles.map((a) => a.listNumber!);
+        expect(numbers).toEqual([...numbers].sort((a, b) => b - a));
+        expect(numbers[0]! - numbers.at(-1)!).toBe(numbers.length - 1); // contiguous
+
+        expect(latest.hasOlder).toBe(true);
+        const older = await service.getBoardPage(BOARD, latest.next);
+        expect(older.articles[0]!.listNumber).toBe(latest.next!.before - 1);
+        expect(older.pinned).toEqual([]);
+
+        // a normal article: identified, read, and checked against the entry
+        const target = latest.articles.find((a) => a.kind === 'normal') ?? latest.articles[0]!;
+        const resolved = await service.resolveArticleId({
+          board: BOARD,
+          listNumber: target.listNumber,
+          title: target.title,
         });
-        transport.send('Y\r');
-        await waitFor(terminal, (t) => t.text().includes('任意鍵'), {
-          timeoutMs: 10_000,
-          description: 'goodbye screen',
-        });
-        transport.send(' ');
-      });
+        expect(resolved.id).toMatch(/^M\.\d+\.A\.[0-9A-F]+$/);
+        expect(resolved.aid).toMatch(/^#\S+$/);
 
-      const info = await Promise.race([
-        closed,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('server did not close the connection')), 10_000)
-        ),
-      ]);
-      expect(info.code).toBe(1000);
-    } finally {
-      transport.close();
-      terminal.dispose();
+        const read = await service.getArticle({
+          board: BOARD,
+          listNumber: target.listNumber,
+          title: target.title,
+          id: resolved.id,
+        });
+        expect(read.verified).toBe(true);
+        expect(read.id).toBe(resolved.id);
+        expect(read.url).toContain(resolved.id);
+        expect(read.bodyLines.length).toBeGreaterThan(0);
+        expect(read.truncated).toBe(false);
+
+        // a pinned article, if the board has one
+        if (latest.pinned.length > 0) {
+          const pinned = await service.getArticle({
+            board: BOARD,
+            isPinned: true,
+            pinnedIndex: 0,
+            title: latest.pinned[0]!.title,
+          });
+          expect(pinned.verified).toBe(true);
+        }
+
+        // the connection is still usable after all of that
+        expect(await service.openBoard(BOARD)).toBe(true);
+      } catch (error) {
+        // Show what the screen looked like (account name and IP addresses are masked) to make a
+        // surprise from the real server diagnosable.
+        console.error(`live test failed; screen:\n${session.snapshot().join('\n')}`);
+        throw error;
+      } finally {
+        await service.logout();
+      }
+
+      expect(session.state).toBe('disconnected');
+      expect(await session.closed).toMatchObject({ code: 1000 });
     }
-  });
+  );
 });

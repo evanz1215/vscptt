@@ -67,6 +67,50 @@ describe('waitFor', () => {
     await t.write(utf8('more'));
     expect(calls).toBe(before);
   });
+
+  it('rejects at once with the abort reason, and stops listening', async () => {
+    const t = new Terminal();
+    const controller = new AbortController();
+    let calls = 0;
+    const pending = waitFor(
+      t,
+      () => {
+        calls++;
+        return false;
+      },
+      { timeoutMs: 60_000, signal: controller.signal }
+    ).catch((e) => e);
+
+    const reason = new Error('connection closed');
+    controller.abort(reason);
+    expect(await pending).toBe(reason);
+
+    const before = calls;
+    await t.write(utf8('later'));
+    expect(calls).toBe(before);
+  });
+
+  it('rejects immediately when the signal is already aborted', async () => {
+    const t = new Terminal();
+    const controller = new AbortController();
+    controller.abort(new Error('already gone'));
+    await expect(
+      waitFor(t, () => true, { timeoutMs: 1000, signal: controller.signal })
+    ).rejects.toThrow('already gone');
+  });
+
+  it('lets waitForQuiet be aborted too', async () => {
+    const t = new Terminal();
+    const controller = new AbortController();
+    const pending = waitForQuiet(t, {
+      quietMs: 60_000,
+      timeoutMs: 60_000,
+      signal: controller.signal,
+    });
+    const outcome = pending.catch((e) => e);
+    controller.abort(new Error('closed'));
+    expect(((await outcome) as Error).message).toBe('closed');
+  });
 });
 
 // xterm batches writes with setTimeout, so under fake timers a write only completes once the clock moves.

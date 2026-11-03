@@ -1,3 +1,4 @@
+import { redactLine } from '../errors';
 import type { Terminal } from '../terminal/terminal';
 
 export class WaitTimeoutError extends Error {
@@ -9,12 +10,17 @@ export class WaitTimeoutError extends Error {
   ) {
     super(`Timed out after ${timeoutMs} ms waiting for: ${description}`);
     this.name = 'WaitTimeoutError';
+    this.snapshot = snapshot.map((line) => redactLine(line));
   }
 }
 
 export interface WaitOptions {
   timeoutMs: number;
   description?: string;
+  /** Abort to stop waiting at once; the promise rejects with `signal.reason`. */
+  signal?: AbortSignal;
+  /** Applied to each screen line kept in the timeout snapshot (IP addresses are always masked). */
+  redact?: (line: string) => string;
 }
 
 /**
@@ -26,14 +32,20 @@ export function waitFor<T>(
   predicate: (terminal: Terminal) => T | false | null | undefined,
   options: WaitOptions
 ): Promise<NonNullable<T>> {
-  const { timeoutMs, description = 'screen condition' } = options;
+  const { timeoutMs, description = 'screen condition', signal, redact = (line) => line } = options;
 
   return new Promise((resolve, reject) => {
     let unsubscribe: () => void = () => {};
     let timer: ReturnType<typeof setTimeout> | undefined;
 
+    const onAbort = () => {
+      finish();
+      reject(signal!.reason);
+    };
+
     const finish = () => {
       unsubscribe();
+      signal?.removeEventListener('abort', onAbort);
       if (timer !== undefined) {
         clearTimeout(timer);
       }
@@ -55,13 +67,18 @@ export function waitFor<T>(
       return false;
     };
 
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
     if (check()) {
       return;
     }
+    signal?.addEventListener('abort', onAbort, { once: true });
     unsubscribe = terminal.onUpdate(check);
     timer = setTimeout(() => {
-      unsubscribe();
-      reject(new WaitTimeoutError(description, timeoutMs, terminal.lines()));
+      finish();
+      reject(new WaitTimeoutError(description, timeoutMs, terminal.lines().map(redact)));
     }, timeoutMs);
   });
 }
