@@ -366,8 +366,7 @@ export class FakeBbs {
     }
     if (key === 'RIGHT' || key === 'ENTER') {
       if (this.menuCursor === 'F') {
-        this.favoritesCursor = 0;
-        this.favoritesTop = 0;
+        // Like PTT, the favorites list comes back on the page and row where it was left.
         this.mode = 'favorites';
         this.render();
       } else if (this.menuCursor === 'N') {

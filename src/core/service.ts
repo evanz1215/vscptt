@@ -246,6 +246,36 @@ export class PttService {
     ).rows;
     const all = new Map(rows.map((r) => [r.number, r]));
 
+    // PTT reopens the list where it was left, so go back up to the first page before reading downwards.
+    for (let page = 1; page < FAVORITES_PAGE_LIMIT && rows.length > 0; page++) {
+      const lowest = Math.min(...rows.map((r) => r.number));
+      if (lowest <= 1) {
+        break;
+      }
+      s.send(Keys.PGUP);
+      try {
+        rows = await s.waitFor(
+          (l) => {
+            if (!isFavoritesScreen(l)) {
+              return false;
+            }
+            const previous = parseFavorites(l);
+            return previous.some((r) => r.number < lowest) ? previous : false;
+          },
+          'the previous favorites page',
+          this.nextPageTimeoutMs
+        );
+      } catch (error) {
+        if (error instanceof WaitTimeoutError) {
+          break; // already at the top
+        }
+        throw error;
+      }
+      for (const r of rows) {
+        all.set(r.number, r);
+      }
+    }
+
     // A full screen may continue on the next page.
     for (let page = 1; page < FAVORITES_PAGE_LIMIT && rows.length >= LIST_PAGE_SIZE; page++) {
       const highest = Math.max(...rows.map((r) => r.number));

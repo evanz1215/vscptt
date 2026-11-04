@@ -698,6 +698,22 @@ describe('favorites that span several screens', () => {
     expect(favorites.map((f) => f.name)).toEqual(names(n));
   });
 
+  it.each([[45], [41], [21], [20]])(
+    'reads all %i favorites again after a refresh, even though PTT remembers the last page',
+    async (n) => {
+      const boards = Object.fromEntries(names(n).map((b) => [b, board(1)]));
+      const { service } = await setup(boards, {
+        favorites: names(n),
+        service: { nextPageTimeoutMs: 150 },
+      });
+      await service.getFavorites(); // leaves PTT's cursor on the last page
+      service.invalidate();
+
+      const again = await service.getFavorites();
+      expect(again.map((f) => f.name)).toEqual(names(n));
+    }
+  );
+
   it('reads an empty favorites list', async () => {
     const { service } = await setup({ Dev: board(1) }, { service: { nextPageTimeoutMs: 150 } });
     expect(await service.getFavorites()).toEqual([]);
