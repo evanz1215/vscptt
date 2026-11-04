@@ -79,6 +79,8 @@ export interface ArticleRef {
   pinnedIndex?: number;
   /** The list title; used to notice that the list changed underneath us. */
   title?: string;
+  /** The list author; with the title, it catches a shifted list when titles repeat ("Re:" threads). */
+  author?: string;
   /** Known id (from an earlier resolve); the article opened must have exactly this id. */
   id?: ArticleId;
 }

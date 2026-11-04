@@ -423,7 +423,10 @@ export class PttService {
       row = (await this.selectNumber(ref.listNumber!)).selected!;
     }
 
-    if (ref.title !== undefined && !titlesMatch(row.title, ref.title)) {
+    if (
+      (ref.title !== undefined && !titlesMatch(row.title, ref.title)) ||
+      (ref.author !== undefined && row.author !== ref.author)
+    ) {
       throw new ArticleMismatchError(
         'The list changed: the selected entry is not the one that was asked for'
       );

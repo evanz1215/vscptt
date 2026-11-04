@@ -39,8 +39,14 @@ function toRef(summary: ArticleSummary): ArticleRef {
         isPinned: true,
         pinnedIndex: summary.pinnedIndex,
         title: summary.title,
+        author: summary.author,
       }
-    : { board: summary.board, listNumber: summary.listNumber, title: summary.title };
+    : {
+        board: summary.board,
+        listNumber: summary.listNumber,
+        title: summary.title,
+        author: summary.author,
+      };
 }
 
 /** Registers every command declared in package.json. */

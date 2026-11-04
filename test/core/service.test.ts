@@ -236,6 +236,22 @@ describe('getBoardPage', () => {
 });
 
 describe('getArticle', () => {
+  it('refuses an entry whose author changed even if the title is the same (a Re: thread after deletions)', async () => {
+    const articles = board(10);
+    articles[4] = article(5, { title: 'Re: same', author: 'alice' });
+    articles[5] = article(6, { title: 'Re: same', author: 'bob' });
+    const { service } = await setup({ Dev: articles });
+
+    // The reader saw row 5 as alice's; the list has since shifted so row 5 is bob's.
+    await expect(
+      service.getArticle({ board: 'Dev', listNumber: 6, title: 'Re: same', author: 'alice' })
+    ).rejects.toBeInstanceOf(ArticleMismatchError);
+    expect(
+      (await service.getArticle({ board: 'Dev', listNumber: 6, title: 'Re: same', author: 'bob' }))
+        .id
+    ).toBe('M.1006.A.006');
+  });
+
   it('opens a pinned article even when the board was left far from its end', async () => {
     const { service } = await setup({ Dev: board(60, 2) });
     const latest = await service.getBoardPage('Dev');

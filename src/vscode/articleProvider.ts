@@ -63,6 +63,7 @@ export function refFromUri(uri: vscode.Uri): ArticleRef | undefined {
     !optional('pinnedIndex', isNumber) ||
     !optional('isPinned', (v) => typeof v === 'boolean') ||
     !optional('title', isString) ||
+    !optional('author', isString) ||
     !optional('id', isString)
   ) {
     return undefined;
@@ -73,6 +74,7 @@ export function refFromUri(uri: vscode.Uri): ArticleRef | undefined {
     pinnedIndex: r.pinnedIndex as number | undefined,
     isPinned: r.isPinned as boolean | undefined,
     title: r.title as string | undefined,
+    author: r.author as string | undefined,
     id: r.id as string | undefined,
   };
 }
