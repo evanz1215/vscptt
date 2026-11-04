@@ -4,6 +4,7 @@ import type { Lines } from './prompts';
 
 export interface ArticleStatus {
   page: number;
+  /** 0 when the screen does not say. */
   pages: number;
   percent: number;
   /** "目前顯示: 第 from~to 行" */
@@ -32,14 +33,16 @@ export interface ParsedArticle {
   url?: string;
 }
 
-const STATUS = /瀏覽\s+第\s*(\d+)\/(\d+)\s*頁\s*\(\s*(\d+)%\)\s*目前顯示:\s*第\s*(\d+)~(\d+)\s*行/;
+// Long or still-growing articles show "第 1 頁" without the total, so "/N" is optional.
+const STATUS =
+  /瀏覽\s+第\s*(\d+)(?:\/(\d+))?\s*頁\s*\(\s*(\d+)%\)\s*目前顯示:\s*第\s*(\d+)~(\d+)\s*行/;
 
 export function parseArticleStatus(lines: Lines): ArticleStatus | null {
   const m = STATUS.exec(lines[23] ?? '');
   return m
     ? {
         page: Number(m[1]),
-        pages: Number(m[2]),
+        pages: m[2] ? Number(m[2]) : 0,
         percent: Number(m[3]),
         from: Number(m[4]),
         to: Number(m[5]),
@@ -53,9 +56,12 @@ export function parseArticlePage(lines: Lines): ArticlePage | null {
 }
 
 /**
- * Joins consecutive pages. Verified on the live server: the rows that repeat at a page break number
- * `previous.to - current.from + 1` (1 between middle pages, more on the last page, which is anchored to the end).
- * The repeated rows must be identical, otherwise the pages do not belong together.
+ * Joins consecutive pages. Paging by PgDn leaves rows repeated at the break: one row between full pages, and
+ * more on the last page, which is anchored to the end. The status numbers count source lines, not screen rows,
+ * so they only predict the overlap for articles without wrapped lines (verified live: it is `previous.to -
+ * current.from + 1`, or one more on a short article's last page). When the prediction does not hold the overlap
+ * is found from the rows themselves: the longest run of rows that ends the text so far and starts the new page.
+ * Pages sharing no row at all do not belong together.
  */
 export function mergePages(pages: ArticlePage[]): string[] {
   if (pages.length === 0) {
@@ -65,17 +71,14 @@ export function mergePages(pages: ArticlePage[]): string[] {
   for (let i = 1; i < pages.length; i++) {
     const prev = pages[i - 1]!;
     const cur = pages[i]!;
-    const overlap = prev.status.to - cur.status.from + 1;
-    const tail = merged.slice(merged.length - Math.max(overlap, 0));
-    const head = cur.rows.slice(0, Math.max(overlap, 0));
-    if (
-      overlap < 0 ||
-      overlap > cur.rows.length ||
-      overlap > merged.length ||
-      tail.join('\n') !== head.join('\n')
-    ) {
+    const expected = prev.status.to - cur.status.from + 1;
+    let overlap = [expected, expected + 1].find((n) => n >= 1 && repeats(merged, cur.rows, n));
+    for (let n = Math.min(cur.rows.length, merged.length); overlap === undefined && n >= 1; n--) {
+      overlap = repeats(merged, cur.rows, n) ? n : undefined;
+    }
+    if (overlap === undefined) {
       throw new UnexpectedScreenError(
-        `Article pages do not line up (page ${cur.status.page}, overlap ${overlap})`,
+        `Article pages do not line up (page ${i + 1}, expected overlap ${expected})`,
         cur.rows
       );
     }
@@ -84,8 +87,19 @@ export function mergePages(pages: ArticlePage[]): string[] {
   return merged;
 }
 
+/** True when the last `n` rows of `merged` are the first `n` rows of `next`. */
+function repeats(merged: string[], next: string[], n: number): boolean {
+  return (
+    n >= 0 &&
+    n <= next.length &&
+    n <= merged.length &&
+    merged.slice(merged.length - n).join('\n') === next.slice(0, n).join('\n')
+  );
+}
+
 const PUSH = /^(推|噓|→)\s*(\S+?):\s*(.*?)\s+(\d{2}\/\d{2})(?:\s+(\d{2}:\d{2}))?\s*$/;
 const SIGNATURE = /^※\s*(發信站|文章網址)/;
+const TRANSFER_LINE = /^※\s*轉錄者:/;
 const URL_LINE = /^※\s*文章網址:\s*(https?:\/\/\S+)/;
 
 export function parseArticle(rows: readonly string[]): ParsedArticle {
@@ -131,6 +145,11 @@ export function parseArticle(rows: readonly string[]): ParsedArticle {
   let url: string | undefined;
   for (const line of bodyLines) {
     url = URL_LINE.exec(line)?.[1] ?? url;
+    // A cross-posted copy carries the original's signature and then its own, which has no URL ("轉錄者").
+    // Seen live: the only URL in the text is the original's, so it says nothing about this article.
+    if (TRANSFER_LINE.test(line)) {
+      url = undefined;
+    }
   }
   return { header, bodyLines, pushes, url };
 }

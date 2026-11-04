@@ -1,7 +1,7 @@
 {
   "name": "vscptt",
   "displayName": "vscptt",
-  "description": "PTT BBS browser for VS Code",
+  "description": "在 VS Code 裡瀏覽 PTT：看板、文章與推文（唯讀）",
   "version": "0.0.1",
   "publisher": "Evan",
   "license": "MIT",
@@ -13,14 +13,261 @@
     "Other"
   ],
   "main": "./out/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vscptt",
+          "title": "PTT",
+          "icon": "media/ptt.svg"
+        }
+      ]
+    },
+    "views": {
+      "vscptt": [
+        {
+          "id": "vscptt.boards",
+          "name": "看板"
+        }
+      ]
+    },
     "commands": [
       {
-        "command": "vscptt.hello",
-        "title": "vscptt: Hello"
+        "command": "vscptt.login",
+        "title": "登入",
+        "category": "PTT",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "vscptt.logout",
+        "title": "登出",
+        "category": "PTT",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "vscptt.reconnect",
+        "title": "重新連線",
+        "category": "PTT",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "vscptt.clearCredentials",
+        "title": "清除已儲存的帳密",
+        "category": "PTT"
+      },
+      {
+        "command": "vscptt.statusMenu",
+        "title": "連線選項",
+        "category": "PTT"
+      },
+      {
+        "command": "vscptt.refresh",
+        "title": "重新整理",
+        "category": "PTT",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vscptt.clearCache",
+        "title": "清除快取",
+        "category": "PTT"
+      },
+      {
+        "command": "vscptt.openBoard",
+        "title": "開啟看板…",
+        "category": "PTT",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vscptt.loadMore",
+        "title": "載入更多",
+        "category": "PTT"
+      },
+      {
+        "command": "vscptt.openArticle",
+        "title": "開啟文章",
+        "category": "PTT"
+      },
+      {
+        "command": "vscptt.refreshArticle",
+        "title": "重新整理這篇文章",
+        "category": "PTT",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vscptt.copyArticleId",
+        "title": "複製文章代碼",
+        "category": "PTT"
+      },
+      {
+        "command": "vscptt.copyArticleUrl",
+        "title": "複製文章網址",
+        "category": "PTT"
       }
-    ]
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "vscptt.loadMore",
+          "when": "false"
+        },
+        {
+          "command": "vscptt.openArticle",
+          "when": "false"
+        },
+        {
+          "command": "vscptt.copyArticleId",
+          "when": "false"
+        },
+        {
+          "command": "vscptt.copyArticleUrl",
+          "when": "false"
+        },
+        {
+          "command": "vscptt.refreshArticle",
+          "when": "resourceScheme == vscptt"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vscptt.login",
+          "when": "view == vscptt.boards && !vscptt.loggedIn",
+          "group": "navigation@0"
+        },
+        {
+          "command": "vscptt.openBoard",
+          "when": "view == vscptt.boards && vscptt.loggedIn",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vscptt.refresh",
+          "when": "view == vscptt.boards",
+          "group": "navigation@2"
+        },
+        {
+          "command": "vscptt.logout",
+          "when": "view == vscptt.boards && vscptt.loggedIn",
+          "group": "1_connection@1"
+        },
+        {
+          "command": "vscptt.reconnect",
+          "when": "view == vscptt.boards && vscptt.loggedIn",
+          "group": "1_connection@2"
+        },
+        {
+          "command": "vscptt.clearCache",
+          "when": "view == vscptt.boards",
+          "group": "2_misc@1"
+        },
+        {
+          "command": "vscptt.clearCredentials",
+          "when": "view == vscptt.boards",
+          "group": "2_misc@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vscptt.refresh",
+          "when": "view == vscptt.boards && viewItem == board",
+          "group": "inline"
+        },
+        {
+          "command": "vscptt.copyArticleUrl",
+          "when": "view == vscptt.boards && viewItem =~ /^article/",
+          "group": "1_copy@1"
+        },
+        {
+          "command": "vscptt.copyArticleId",
+          "when": "view == vscptt.boards && viewItem =~ /^article/",
+          "group": "1_copy@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "vscptt.refreshArticle",
+          "when": "resourceScheme == vscptt",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "PTT",
+      "properties": {
+        "vscptt.login.duplicateSession": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "kick",
+            "keep"
+          ],
+          "default": "ask",
+          "enumDescriptions": [
+            "詢問：帳號已在別處登入時，由你決定要不要把對方登出",
+            "直接把另一條連線登出再繼續（對方，包括你的其他裝置，會被登出）",
+            "保留另一條連線：PTT 會拒絕這次登入"
+          ],
+          "description": "帳號已經在別處登入時的處理方式。",
+          "scope": "application"
+        },
+        "vscptt.login.autoLogin": {
+          "type": "boolean",
+          "default": false,
+          "description": "啟動時，如果已儲存密碼，就自動登入。",
+          "scope": "application"
+        },
+        "vscptt.connection.settleMs": {
+          "type": "number",
+          "default": 80,
+          "minimum": 20,
+          "maximum": 1000,
+          "description": "PTT 畫面停止變動多久（毫秒）後，才當作畫面已經畫完。下次登入時生效。"
+        },
+        "vscptt.connection.stepTimeoutMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "等待 PTT 的單一畫面最久多少毫秒。下次登入時生效。"
+        },
+        "vscptt.connection.keepAliveSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 600,
+          "description": "閒置多少秒後送一個無害的按鍵維持連線。0 表示關閉；低於 10 會當作 10。下次登入時生效。"
+        },
+        "vscptt.cache.latestPageSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "看板最新一頁的快取秒數。下次登入時生效。"
+        },
+        "vscptt.cache.olderPageSeconds": {
+          "type": "number",
+          "default": 600,
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "較舊頁面的快取秒數。下次登入時生效。"
+        },
+        "vscptt.cache.articleSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "文章內容的快取秒數。下次登入時生效。"
+        },
+        "vscptt.cache.favoritesSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "我的最愛清單的快取秒數。下次登入時生效。"
+        }
+      }
+    }
   },
   "scripts": {
     "build": "node esbuild.mjs",

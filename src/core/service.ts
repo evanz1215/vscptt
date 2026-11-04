@@ -1,5 +1,6 @@
 import { TtlCache } from './cache/ttlCache';
 import {
+  ArticleDeletedError,
   ArticleMismatchError,
   BoardNotFoundError,
   ConnectionClosedError,
@@ -27,7 +28,12 @@ import {
   sameBoard,
 } from './screens/boardList';
 import { isFavoritesScreen, parseFavorites } from './screens/favorites';
-import { isAnyKeyPrompt, isBoardSelectPrompt } from './screens/prompts';
+import {
+  isAnyKeyPrompt,
+  isBoardSelectPrompt,
+  isLogoutConfirm,
+  isMainMenu,
+} from './screens/prompts';
 import type { Credentials, Session, SessionState } from './session/session';
 
 export interface PttServiceOptions {
@@ -256,10 +262,20 @@ export class PttService {
     try {
       for (let step = 0; step < 4 && !list; step++) {
         const screen = await s.waitFor(
-          (l) => (isBoardList(l) ? 'list' : isAnyKeyPrompt(l) ? 'anyKey' : false),
+          (l) =>
+            isBoardList(l)
+              ? 'list'
+              : isAnyKeyPrompt(l)
+                ? 'anyKey'
+                : isMainMenu(l) && !isLogoutConfirm(l)
+                  ? 'menu' // the prompt closed and the main menu is back: PTT has no such board
+                  : false,
           'the board screen',
           this.boardEnterTimeoutMs
         );
+        if (screen === 'menu') {
+          break;
+        }
         if (screen === 'anyKey') {
           await s.sendAndWaitChange(Keys.SPACE, 'the board list');
         } else {
@@ -299,11 +315,36 @@ export class PttService {
     if (!isListNumber(n)) {
       throw new InvalidArgumentError(`Not a list number: ${n}`); // never type anything but plain digits
     }
-    this.session.send(String(n), Keys.ENTER);
-    return this.session.waitFor((l) => {
+    const s = this.session;
+    const matches = (l: string[]) => {
       const screen = parseBoardList(l);
       return screen?.selected?.number === n ? screen : false;
-    }, `list row ${n} to be selected`);
+    };
+    const description = `list row ${n} to be selected`;
+    const limit = s.settings.stepTimeoutMs;
+    const quick = Math.min(600, limit);
+
+    s.send(String(n), Keys.ENTER);
+    try {
+      return await s.waitFor(matches, description, quick);
+    } catch (error) {
+      if (!(error instanceof WaitTimeoutError)) {
+        throw error;
+      }
+    }
+    // Not selected yet: either the server is slow or the row does not exist (PTT puts the cursor on the last
+    // row when the number is past the end, which can leave the screen unchanged). Ask the server to catch up;
+    // once it has, where the cursor is is the answer. If it will not say, keep waiting as before.
+    if (await s.flush()) {
+      const now = matches(s.lines);
+      if (now) {
+        return now;
+      }
+      if (parseBoardList(s.lines)?.selected) {
+        throw new ArticleMismatchError(`The list has no row ${n} any more`);
+      }
+    }
+    return s.waitFor(matches, description, Math.max(limit - quick, 1000));
   }
 
   private async loadPage(board: string, cursor: PageCursor | undefined): Promise<BoardPage> {
@@ -355,21 +396,25 @@ export class PttService {
     const s = this.session;
     let row: ListRow;
     if (ref.isPinned) {
-      const list = await this.boardList(ref.board, true);
-      const target = list.rows.filter((r) => r.isPinned)[ref.pinnedIndex!];
-      if (!target || !list.selected) {
+      await this.boardList(ref.board, true);
+      // PTT returns to where the board was left, so the pinned rows (always last) may be off screen: go to the end.
+      s.send('$');
+      await s.flush();
+      const list = parseBoardList(s.lines);
+      const target = list?.rows.filter((r) => r.isPinned)[ref.pinnedIndex!];
+      if (!list || !target || !list.selected) {
         throw new ArticleMismatchError('The pinned article is no longer in the list');
       }
       let current = list.selected;
-      // Pinned rows sit below the newest article, so the cursor only ever moves down.
-      while (current.screenRow < target.screenRow) {
-        const wanted = current.screenRow + 1;
-        s.send(Keys.DOWN);
+      // The cursor is on the last entry, which is below every pinned row, so it only ever moves up.
+      while (current.screenRow > target.screenRow) {
+        const wanted = current.screenRow - 1;
+        s.send(Keys.UP);
         current = (
           await s.waitFor((l) => {
             const screen = parseBoardList(l);
             return screen?.selected?.screenRow === wanted ? screen : false;
-          }, 'the cursor to move down')
+          }, 'the cursor to move up')
         ).selected!;
       }
       row = current;
@@ -401,7 +446,11 @@ export class PttService {
 
   private async loadArticle(ref: ArticleRef): Promise<Article> {
     const s = this.session;
-    await this.position(ref);
+    const row = await this.position(ref);
+    // PTT leaves a placeholder row for a deleted article. Enter and Q do nothing on it, so asking would only time out.
+    if (isDeletedRow(row)) {
+      throw new ArticleDeletedError();
+    }
     const popup = await this.readPopup(ref.board);
     checkId(ref, popup.id);
 
@@ -427,17 +476,24 @@ export class PttService {
     let page = await s.waitFor(parseArticlePage, 'the article');
     const pages = [page];
     let truncated = false;
-    while (page.status.page < page.status.pages) {
+    // The page number on the status line counts source lines, so it stops being a page number once long lines
+    // wrap. Progress is judged by the lines shown and the percentage, and the end by 100%.
+    while (page.status.percent < 100) {
       if (pages.length >= this.maxArticlePages) {
         truncated = true;
         break;
       }
-      const wanted = page.status.page + 1;
+      const before = page.status;
       s.send(Keys.PGDN);
-      page = await s.waitFor((l) => {
-        const next = parseArticlePage(l);
-        return next && next.status.page === wanted ? next : false;
-      }, `article page ${wanted}`);
+      page = await s.waitFor(
+        (l) => {
+          const next = parseArticlePage(l);
+          return next && (next.status.to > before.to || next.status.from > before.from)
+            ? next
+            : false;
+        },
+        `article page ${pages.length + 1}`
+      );
       pages.push(page);
     }
     return { pages, truncated };
@@ -454,6 +510,11 @@ export class PttService {
       throw error;
     }
   }
+}
+
+/** Deleted articles show "-" as the author and a title like "(本文已被刪除) [id]" or "(已被id刪除) <id> title". */
+function isDeletedRow(row: ListRow): boolean {
+  return row.author === '-' && /^\((?:本文已被刪除|已被.+刪除)\)/.test(row.title);
 }
 
 function buildArticle(
@@ -537,8 +598,13 @@ function titlesMatch(a: string, b: string): boolean {
   return x === y || x.startsWith(y) || y.startsWith(x);
 }
 
+/** True for a name that is safe to type into PTT's board prompt. */
+export function isValidBoardName(name: string): boolean {
+  return BOARD_NAME.test(name);
+}
+
 function assertBoardName(name: string): void {
-  if (!BOARD_NAME.test(name)) {
+  if (!isValidBoardName(name)) {
     throw new InvalidArgumentError(`Not a valid board name: ${JSON.stringify(name)}`);
   }
 }

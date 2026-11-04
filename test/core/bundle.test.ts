@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,5 +91,52 @@ describe('esbuild bundle of the core modules', () => {
     const article = await service.getArticle({ board: 'Dev', listNumber: 2 });
     expect(article).toMatchObject({ id: 'M.2.A.002', verified: true });
     await service.logout();
+  });
+  it('activates the real extension entry point from the bundle and registers every declared command', async () => {
+    // The real `vscode` module only exists inside VS Code, so the stand-in is bundled in its place. Exporting
+    // it from the same bundle lets the test see what the extension did to it.
+    buildSync({
+      stdin: {
+        contents: [
+          "export * from './src/extension';",
+          "export { mock } from './test/mocks/vscode';",
+        ].join('\n'),
+        resolveDir: process.cwd(),
+        loader: 'ts',
+      },
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      alias: { vscode: join(process.cwd(), 'test/mocks/vscode.ts') },
+      outfile: join(dir, 'ext.js'),
+      logLevel: 'silent',
+    });
+    const { activate, deactivate, mock } = load('ext') as {
+      activate: (context: unknown) => void;
+      deactivate: () => Promise<void> | undefined;
+      mock: {
+        commands: Map<string, unknown>;
+        treeViews: Array<{ id: string }>;
+        statusItems: unknown[];
+      };
+    };
+
+    const state = new Map<string, unknown>();
+    activate({
+      subscriptions: [],
+      secrets: { get: async () => undefined, store: async () => {}, delete: async () => {} },
+      globalState: {
+        get: (k: string) => state.get(k),
+        update: async (k: string, v: unknown) => void state.set(k, v),
+      },
+    });
+
+    const declared = JSON.parse(readFileSync('package.json', 'utf8')).contributes.commands.map(
+      (c: { command: string }) => c.command
+    );
+    expect([...mock.commands.keys()].sort()).toEqual([...declared].sort());
+    expect(mock.treeViews.map((v) => v.id)).toEqual(['vscptt.boards']);
+    expect(mock.statusItems).toHaveLength(1);
+    await deactivate(); // nothing is connected, so there is nothing to log out of
   });
 });

@@ -334,3 +334,30 @@ describe('prompts that echo what is typed (found by the live test)', () => {
     expect(transport.sent.filter((k) => k === 'N\r')).toHaveLength(1);
   });
 });
+
+describe('flush', () => {
+  it('resolves true once the server has answered a redraw, leaving the screen as it was', async () => {
+    const { session } = connect();
+    await session.login(creds);
+    const before = session.lines;
+    expect(await session.flush()).toBe(true);
+    expect(session.lines).toEqual(before);
+  });
+
+  it('resolves false when the server never answers, instead of hanging', async () => {
+    const { session, transport } = connect();
+    await session.login(creds);
+    (transport as { send: unknown }).send = () => {}; // the server has gone quiet
+    const started = Date.now();
+    expect(await session.flush(150)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('fails at once when the connection is gone', async () => {
+    const { session, transport } = connect();
+    await session.login(creds);
+    transport.serverClose({ code: 1006 });
+    await session.closed;
+    await expect(session.flush()).rejects.toBeInstanceOf(ConnectionClosedError);
+  });
+});

@@ -5,6 +5,7 @@ export type PttErrorCode =
   | 'connectionClosed'
   | 'unexpectedScreen'
   | 'articleMismatch'
+  | 'articleDeleted'
   | 'boardNotFound'
   | 'notLoggedIn'
   | 'invalidArgument';
@@ -87,6 +88,13 @@ export class UnexpectedScreenError extends PttError {
 export class ArticleMismatchError extends PttError {
   constructor(message: string) {
     super(message, 'articleMismatch');
+  }
+}
+
+/** The list row is PTT's placeholder for a deleted article: there is nothing to open. */
+export class ArticleDeletedError extends PttError {
+  constructor() {
+    super('The article was deleted', 'articleDeleted');
   }
 }
 

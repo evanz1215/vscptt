@@ -25,6 +25,10 @@ export class FakeTransport implements Transport {
     this.onSend?.(text, this);
   }
 
+  get isClosed(): boolean {
+    return this.closeInfo !== undefined;
+  }
+
   close(): void {
     this.serverClose({ code: 1000, reason: 'closed by client' });
   }

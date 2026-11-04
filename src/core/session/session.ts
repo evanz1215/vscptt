@@ -79,6 +79,8 @@ export class Session {
   private secrets: string[] = [];
   /** Bytes are parsed into the screen asynchronously; this is the tail of that chain. */
   private pendingWrites: Promise<void> = Promise.resolve();
+  /** Counts screen updates, so a caller can tell that something new has been drawn since a moment ago. */
+  private updates = 0;
 
   constructor(
     private readonly transport: Transport,
@@ -97,6 +99,9 @@ export class Session {
       this.resolveClosed = resolve;
     });
     this.unsubscribe.push(
+      this.terminal.onUpdate(() => {
+        this.updates++;
+      }),
       transport.onData((data) => {
         this.pendingWrites = this.pendingWrites
           .then(() => (this.disposed ? undefined : this.terminal.write(data)))
@@ -184,6 +189,26 @@ export class Session {
     this.send(keys);
     await this.waitFor((lines) => !stillShown(lines), description, timeoutMs);
     await this.settle();
+  }
+
+  /**
+   * Waits until the server has dealt with everything typed so far. The BBS handles keys in order, so a redraw
+   * request is answered only after the keys before it; when its answer arrives, their effect is on screen.
+   * Resolves false if no answer came in time (the server ignored the redraw), in which case nothing is known.
+   */
+  async flush(timeoutMs = 2000): Promise<boolean> {
+    const seen = this.updates;
+    this.send(Keys.REDRAW);
+    try {
+      await this.waitFor(() => this.updates > seen, 'the redraw answer', timeoutMs);
+    } catch (error) {
+      if (error instanceof WaitTimeoutError) {
+        return false;
+      }
+      throw error;
+    }
+    await this.settle();
+    return true;
   }
 
   settle(): Promise<void> {

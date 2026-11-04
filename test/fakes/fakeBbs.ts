@@ -135,6 +135,8 @@ export class FakeBbs {
   private menuCursor = '';
   private currentBoard = '';
   private listParent: 'main' | 'favorites' = 'main';
+  /** Observed: PTT puts you back where you left a board, not at its end. */
+  private readonly lastPosition = new Map<string, { cursor: number; top: number }>();
   private favoritesCursor = 0;
   private favoritesTop = 0;
   private items: FakeArticle[] = [];
@@ -413,6 +415,10 @@ export class FakeBbs {
     this.items = [...normals, ...all.filter((a) => a.pinned)];
     this.cursor = Math.max(normals.length - 1, 0);
     this.top = Math.max(this.items.length - WINDOW, 0);
+    const remembered = this.lastPosition.get(board);
+    if (remembered) {
+      ({ cursor: this.cursor, top: this.top } = remembered);
+    }
     this.buffer = '';
     this.mode = 'boardWelcome';
     this.render();
@@ -437,7 +443,12 @@ export class FakeBbs {
         if (this.cursor < this.top) this.top = this.cursor;
         return this.render();
       case 'LEFT':
+        this.lastPosition.set(this.currentBoard, { cursor: this.cursor, top: this.top });
         this.mode = this.listParent;
+        return this.render();
+      case '$': // the last entry (a pinned one if there are any)
+        this.cursor = this.items.length - 1;
+        this.top = Math.max(this.items.length - WINDOW, 0);
         return this.render();
       case 'Q':
         this.mode = 'popup';

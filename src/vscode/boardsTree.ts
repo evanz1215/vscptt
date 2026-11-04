@@ -1,0 +1,327 @@
+import * as vscode from 'vscode';
+import { ConnectionClosedError, NotLoggedInError } from '../core/errors';
+import type { ArticleSummary, BoardPage, FavoriteEntry, PageCursor } from '../core/models';
+import type { ConnectionState } from './connection';
+import { describeError } from './errorMessages';
+import type { OpenedBoards } from './openedBoards';
+
+export type Group = 'favorites' | 'opened';
+
+export type TreeNode =
+  | { kind: 'login'; connecting: boolean }
+  | { kind: 'group'; group: Group }
+  | { kind: 'board'; group: Group; board: string; category?: string; title?: string }
+  | { kind: 'pinned'; group: Group; board: string; count: number }
+  | { kind: 'article'; group: Group; summary: ArticleSummary }
+  | { kind: 'loadMore'; group: Group; board: string }
+  | { kind: 'message'; text: string; command?: string; icon?: string };
+
+/** What the tree reads PTT through. PttService satisfies it. */
+export interface ReadService {
+  getFavorites(): Promise<FavoriteEntry[]>;
+  getBoardPage(board: string, cursor?: PageCursor): Promise<BoardPage>;
+  invalidate(board?: string): void;
+}
+
+/** What the tree needs from the connection. ConnectionManager satisfies it. */
+export interface TreeConnection {
+  readonly state: ConnectionState;
+  /** Throws when there is no usable connection. */
+  readonly service: ReadService;
+  readonly onDidChangeState: vscode.Event<ConnectionState>;
+}
+
+const icon = (id: string) => new vscode.ThemeIcon(id);
+
+function errorNode(error: unknown): TreeNode {
+  const lost = error instanceof ConnectionClosedError || error instanceof NotLoggedInError;
+  return {
+    kind: 'message',
+    text: describeError(error),
+    command: lost ? 'vscptt.reconnect' : 'vscptt.refresh',
+    icon: 'warning',
+  };
+}
+
+/** The "PTT" tree: favorites and opened boards, with their articles. Never throws from getChildren. */
+export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
+  private readonly emitter = new vscode.EventEmitter<TreeNode | undefined>();
+  readonly onDidChangeTreeData = this.emitter.event;
+
+  /** Pages loaded per board (lower-case name), newest page first. Shared by both groups. */
+  private readonly pages = new Map<string, BoardPage[]>();
+  private readonly loading = new Map<string, Promise<BoardPage[]>>();
+  private readonly subscription: vscode.Disposable;
+
+  constructor(
+    private readonly connection: TreeConnection,
+    private readonly opened: OpenedBoards
+  ) {
+    this.subscription = connection.onDidChangeState(() => {
+      this.pages.clear(); // a new connection means anything loaded before may be stale
+      this.emitter.fire(undefined);
+    });
+  }
+
+  /** Forget what was loaded (for one board, or all) and redraw. The service's own cache is dropped too. */
+  refresh(board?: string): void {
+    try {
+      if (board) {
+        this.pages.delete(board.toLowerCase());
+        this.connection.service.invalidate(board);
+      } else {
+        this.pages.clear();
+        this.connection.service.invalidate();
+      }
+    } catch {
+      // not connected: nothing cached on the service side
+    }
+    this.emitter.fire(undefined);
+  }
+
+  /** Appends the next older page of a board to what is shown. Errors are left to the caller. */
+  async loadMore(board: string): Promise<void> {
+    const key = board.toLowerCase();
+    const loaded = this.pages.get(key);
+    const last = loaded?.at(-1);
+    if (!loaded || !last?.hasOlder || !last.next) {
+      return;
+    }
+    const next = await this.connection.service.getBoardPage(board, last.next);
+    if (this.pages.get(key)?.at(-1) !== last) {
+      return; // the board was refreshed or another load got there first
+    }
+    loaded.push(next);
+    this.emitter.fire(undefined);
+  }
+
+  dispose(): void {
+    this.subscription.dispose();
+    this.emitter.dispose();
+  }
+
+  // ---- TreeDataProvider ----
+
+  async getChildren(node?: TreeNode): Promise<TreeNode[]> {
+    if (!node) {
+      return this.rootNodes();
+    }
+    switch (node.kind) {
+      case 'group':
+        return node.group === 'favorites' ? this.favoriteNodes() : this.openedNodes();
+      case 'board':
+        return this.boardChildren(node.group, node.board);
+      case 'pinned':
+        return this.pinnedChildren(node.group, node.board);
+      default:
+        return [];
+    }
+  }
+
+  getTreeItem(node: TreeNode): vscode.TreeItem {
+    switch (node.kind) {
+      case 'login': {
+        const item = new vscode.TreeItem(node.connecting ? '連線中…' : '登入 PTT…');
+        item.id = 'login';
+        item.iconPath = icon(node.connecting ? 'sync~spin' : 'sign-in');
+        item.contextValue = 'login';
+        if (!node.connecting) {
+          item.command = { command: 'vscptt.login', title: '登入 PTT' };
+        }
+        return item;
+      }
+      case 'group': {
+        const item = new vscode.TreeItem(
+          node.group === 'favorites' ? '我的最愛' : '已開啟的看板',
+          vscode.TreeItemCollapsibleState.Expanded
+        );
+        item.id = `group:${node.group}`;
+        item.iconPath = icon(node.group === 'favorites' ? 'star-full' : 'folder-opened');
+        item.contextValue = 'group';
+        return item;
+      }
+      case 'board': {
+        const item = new vscode.TreeItem(node.board, vscode.TreeItemCollapsibleState.Collapsed);
+        item.id = `board:${node.group}:${node.board.toLowerCase()}`;
+        item.description = node.category;
+        item.tooltip = node.title ?? node.board;
+        item.iconPath = icon('comment-discussion');
+        item.contextValue = 'board';
+        return item;
+      }
+      case 'pinned': {
+        const item = new vscode.TreeItem(
+          `置頂文（${node.count}）`,
+          vscode.TreeItemCollapsibleState.Collapsed
+        );
+        item.id = `pinned:${node.group}:${node.board.toLowerCase()}`;
+        item.iconPath = icon('pin');
+        item.contextValue = 'pinnedGroup';
+        return item;
+      }
+      case 'article':
+        return this.articleItem(node);
+      case 'loadMore': {
+        const item = new vscode.TreeItem('載入更多（較舊的文章）…');
+        item.id = `more:${node.group}:${node.board.toLowerCase()}`;
+        item.iconPath = icon('chevron-down');
+        item.contextValue = 'loadMore';
+        item.command = { command: 'vscptt.loadMore', title: '載入更多', arguments: [node.board] };
+        return item;
+      }
+      case 'message': {
+        const item = new vscode.TreeItem(node.text);
+        item.iconPath = icon(node.icon ?? 'info');
+        item.contextValue = 'message';
+        if (node.command) {
+          item.command = { command: node.command, title: node.text };
+        }
+        return item;
+      }
+    }
+  }
+
+  // ---- building nodes ----
+
+  private rootNodes(): TreeNode[] {
+    switch (this.connection.state) {
+      case 'ready':
+        return [
+          { kind: 'group', group: 'favorites' },
+          { kind: 'group', group: 'opened' },
+        ];
+      case 'connecting':
+        return [{ kind: 'login', connecting: true }];
+      case 'disconnected':
+        return [{ kind: 'login', connecting: false }];
+    }
+  }
+
+  private async favoriteNodes(): Promise<TreeNode[]> {
+    try {
+      const favorites = await this.connection.service.getFavorites();
+      if (favorites.length === 0) {
+        return [{ kind: 'message', text: '最愛清單是空的', icon: 'info' }];
+      }
+      return favorites.map((f) => ({
+        kind: 'board' as const,
+        group: 'favorites' as const,
+        board: f.name,
+        category: f.category,
+        title: f.title,
+      }));
+    } catch (error) {
+      return [errorNode(error)];
+    }
+  }
+
+  private openedNodes(): TreeNode[] {
+    const names = this.opened.list();
+    if (names.length === 0) {
+      return [
+        {
+          kind: 'message',
+          text: '尚未開啟任何看板：點這裡輸入看板名稱',
+          command: 'vscptt.openBoard',
+          icon: 'add',
+        },
+      ];
+    }
+    return names.map((board) => ({ kind: 'board' as const, group: 'opened' as const, board }));
+  }
+
+  private async boardChildren(group: Group, board: string): Promise<TreeNode[]> {
+    try {
+      const pages = await this.firstPage(board);
+      const nodes: TreeNode[] = [];
+      const pinned = pages[0]!.pinned;
+      if (pinned.length > 0) {
+        nodes.push({ kind: 'pinned', group, board, count: pinned.length });
+      }
+      const seen = new Set<number>();
+      for (const page of pages) {
+        for (const summary of page.articles) {
+          if (summary.listNumber === undefined || !seen.has(summary.listNumber)) {
+            if (summary.listNumber !== undefined) {
+              seen.add(summary.listNumber);
+            }
+            nodes.push({ kind: 'article', group, summary });
+          }
+        }
+      }
+      const last = pages.at(-1)!;
+      if (last.hasOlder && last.next) {
+        nodes.push({ kind: 'loadMore', group, board });
+      }
+      return nodes.length > 0
+        ? nodes
+        : [{ kind: 'message', text: '這個看板沒有文章', icon: 'info' }];
+    } catch (error) {
+      return [errorNode(error)];
+    }
+  }
+
+  private async pinnedChildren(group: Group, board: string): Promise<TreeNode[]> {
+    try {
+      const pages = await this.firstPage(board);
+      return pages[0]!.pinned.map((summary) => ({ kind: 'article' as const, group, summary }));
+    } catch (error) {
+      return [errorNode(error)];
+    }
+  }
+
+  /** The loaded pages of a board, fetching the latest page first if needed. Concurrent calls share one fetch. */
+  private firstPage(board: string): Promise<BoardPage[]> {
+    const key = board.toLowerCase();
+    const have = this.pages.get(key);
+    if (have) {
+      return Promise.resolve(have);
+    }
+    let pending = this.loading.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const page = await this.connection.service.getBoardPage(board);
+        const pages = [page];
+        this.pages.set(key, pages);
+        return pages;
+      })().finally(() => this.loading.delete(key));
+      this.loading.set(key, pending);
+    }
+    return pending;
+  }
+
+  private articleItem(node: Extract<TreeNode, { kind: 'article' }>): vscode.TreeItem {
+    const { summary } = node;
+    const item = new vscode.TreeItem(summary.title);
+    const where = summary.isPinned ? `p${summary.pinnedIndex}` : String(summary.listNumber);
+    item.id = `article:${node.group}:${summary.board.toLowerCase()}:${where}`;
+    item.description = [summary.push ? `[${summary.push}]` : '', summary.author, summary.date]
+      .filter(Boolean)
+      .join(' ');
+
+    const lines = [summary.title, `作者：${summary.author}`, `日期：${summary.date}`];
+    if (summary.push) {
+      lines.push(`推文：${summary.push}`);
+    }
+    if (summary.isPinned) {
+      lines.push('置頂文：內容可能與列表上的標題不同');
+    }
+    if (summary.kind === 'deleted') {
+      lines.push('這篇文章已被刪除');
+    }
+    item.tooltip = lines.join('\n');
+
+    item.iconPath = icon(
+      summary.kind === 'deleted'
+        ? 'trash'
+        : summary.isPinned
+          ? 'pin'
+          : summary.kind === 'reply'
+            ? 'comment'
+            : 'file-text'
+    );
+    item.contextValue = `article${summary.isPinned ? '.pinned' : ''}${summary.kind === 'deleted' ? '.deleted' : ''}`;
+    item.command = { command: 'vscptt.openArticle', title: '開啟文章', arguments: [summary] };
+    return item;
+  }
+}

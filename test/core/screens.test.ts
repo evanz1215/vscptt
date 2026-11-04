@@ -340,3 +340,72 @@ describe('the exit prompt as the live server drew it', () => {
     expect(isLogoutConfirm(menu)).toBe(false);
   });
 });
+
+describe('the last page of a short article', () => {
+  // Seen live: a 24-line article showed lines 1-23 as "1~22" and lines 2-24 as "2~23", repeating 22 rows.
+  const lines = Array.from({ length: 24 }, (_, i) => `line ${i + 1}`);
+  const page = (from: number, to: number, first: number) => ({
+    rows: lines.slice(first, first + 23),
+    status: { page: from === 1 ? 1 : 2, pages: 2, percent: 100, from, to },
+  });
+
+  it('still merges when it repeats one row more than the status numbers say', () => {
+    const merged = mergePages([page(1, 22, 0), page(2, 23, 1)] as never);
+    expect(merged).toEqual(lines);
+  });
+
+  it('still refuses rows that differ', () => {
+    const broken = page(2, 23, 1);
+    broken.rows[5] = 'something else';
+    expect(() => mergePages([page(1, 22, 0), broken] as never)).toThrow(UnexpectedScreenError);
+  });
+});
+
+describe('articles with wrapped lines or no page total', () => {
+  it('reads a status line that has no "/total"', () => {
+    const lines = Array.from({ length: 24 }, () => '');
+    lines[23] = '  瀏覽 第 1 頁 (  0%)  目前顯示: 第 01~22 行 (y)回應(X)推文    (← )離開(h)說明 ';
+    expect(parseArticleStatus(lines)).toMatchObject({
+      page: 1,
+      pages: 0,
+      percent: 0,
+      from: 1,
+      to: 22,
+    });
+  });
+
+  it('finds the overlap from the rows when long lines make the line numbers misleading', () => {
+    // Seen live: "14~27" on screen while the previous page said "1~?": source lines, not screen rows.
+    const rows = Array.from({ length: 60 }, (_, i) => `row ${i}`);
+    const status = (from: number, to: number) => ({ page: 1, pages: 5, percent: 20, from, to });
+    const first = { rows: rows.slice(0, 23), status: status(1, 14) };
+    const second = { rows: rows.slice(22, 45), status: status(14, 27) }; // one screen row repeated
+    const third = { rows: rows.slice(44, 60).concat(Array(7).fill('')), status: status(27, 40) };
+    expect(mergePages([first, second] as never)).toEqual(rows.slice(0, 45));
+    expect(mergePages([first, second, third] as never).slice(0, 60)).toEqual(rows);
+  });
+});
+
+describe('a cross-posted article', () => {
+  it('does not take the original article’s address as its own', () => {
+    const rows = [
+      ' 作者  someone (nick)                                         看板  Dev ',
+      ' 標題  Fw: [閒聊] hello                                                ',
+      ' 時間  Sun Oct  4 23:58:28 2026                                         ',
+      '─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ',
+      '※  [本文轉錄自 Other 看板 #1abcdEFG ]',
+      'text of the original',
+      '--',
+      '※  發信站: 批踢踢實業坊(ptt.cc), 來自: 192.0.2.1 (臺灣)',
+      '※  文章網址: https://www.ptt.cc/bbs/Other/M.1791129118.A.FDF.html',
+      '',
+      '--',
+      '※  發信站: 批踢踢實業坊(ptt.cc)',
+      '※  轉錄者: someone (192.0.2.1 臺灣), 10/04/2026 23:58:28',
+      '推 bob: nice                                                        10/06 09:06',
+    ];
+    const parsed = parseArticle(rows);
+    expect(parsed.url).toBeUndefined();
+    expect(parsed.pushes).toHaveLength(1);
+  });
+});

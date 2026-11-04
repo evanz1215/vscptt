@@ -1,4 +1,6 @@
 .vscode/**
+.doit/**
+docs/**
 src/**
 test/**
 node_modules/**
@@ -6,5 +8,8 @@ esbuild.mjs
 vitest.config.ts
 tsconfig.json
 pnpm-lock.yaml
+pnpm-workspace.yaml
+.prettierignore
+.prettierrc.json
 **/*.map
 .gitignore

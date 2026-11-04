@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ArticleDeletedError,
   ArticleMismatchError,
   ConnectionClosedError,
   InvalidArgumentError,
@@ -235,6 +236,33 @@ describe('getBoardPage', () => {
 });
 
 describe('getArticle', () => {
+  it('opens a pinned article even when the board was left far from its end', async () => {
+    const { service } = await setup({ Dev: board(60, 2) });
+    const latest = await service.getBoardPage('Dev');
+    await service.getBoardPage('Dev', latest.next); // leaves the list scrolled to older articles
+
+    const a = await service.getArticle({
+      board: 'Dev',
+      isPinned: true,
+      pinnedIndex: 1,
+      title: '[公告] 置頂1',
+    });
+    expect(a.title).toContain('置頂1');
+  });
+
+  it('says at once that a deleted article has nothing to open, and the next one still works', async () => {
+    const articles = board(10);
+    articles[2] = article(3, { kind: 'deleted' });
+    const { service } = await setup({ Dev: articles });
+
+    const started = Date.now();
+    await expect(service.getArticle({ board: 'Dev', listNumber: 3 })).rejects.toBeInstanceOf(
+      ArticleDeletedError
+    );
+    expect(Date.now() - started).toBeLessThan(2000); // not a step timeout
+    expect((await service.getArticle({ board: 'Dev', listNumber: 4 })).id).toBe('M.1004.A.004');
+  });
+
   it('reads a normal article: header, body, pushes, ids, and marks it verified', async () => {
     const { service } = await setup({ Dev: board(10) });
     const a = await service.getArticle({ board: 'Dev', listNumber: 7, title: '[測試] 第7篇' });
@@ -677,4 +705,40 @@ describe('operations when the connection drops', () => {
     await expect(service.getBoardPage('Dev')).rejects.toBeInstanceOf(ConnectionClosedError);
     expect(Date.now() - started).toBeLessThan(2000); // a step timeout alone is 5 s
   });
+});
+
+describe('failing fast when the list is not what the tree thought (found while testing the UI)', () => {
+  it('reports a row that no longer exists as a changed list within a couple of seconds, not as a timeout', async () => {
+    const { service } = await setup({ Dev: board(5) });
+    const started = Date.now();
+    const error = await service.getArticle({ board: 'Dev', listNumber: 9 }).catch((e) => e);
+    expect(error).toBeInstanceOf(ArticleMismatchError);
+    expect(Date.now() - started).toBeLessThan(3000); // the step timeout alone is 5 s
+    // and the session is fine afterwards
+    expect((await service.getArticle({ board: 'Dev', listNumber: 2 })).title).toBe('[測試] 第2篇');
+  });
+
+  it('says a board does not exist as soon as the menu comes back, without waiting out the timeout', async () => {
+    const { service } = await setup({ Dev: board(3) }, { service: { boardEnterTimeoutMs: 5000 } });
+    const started = Date.now();
+    expect(await service.openBoard('Nope')).toBe(false);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(await service.openBoard('Dev')).toBe(true);
+  });
+});
+
+describe('a slow server is not mistaken for a missing row', () => {
+  it('still finds a row that exists when every answer takes longer than the first look', async () => {
+    const { service, transport } = await setup({ Dev: board(5) });
+    await service.getBoardPage('Dev'); // enter the board at normal speed
+
+    // From now on the server answers 700 ms late, but still in order, like a slow link.
+    const original = transport.send.bind(transport);
+    (transport as { send: unknown }).send = (data: string) => {
+      setTimeout(() => original(data), 700);
+    };
+
+    const resolved = await service.resolveArticleId({ board: 'Dev', listNumber: 2 });
+    expect(resolved.id).toBe('M.1002.A.002');
+  }, 30_000);
 });
