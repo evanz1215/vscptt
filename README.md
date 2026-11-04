@@ -8,6 +8,7 @@
 2. 輸入帳號與密碼，並選擇是否記住。密碼只存放在 VS Code 的 SecretStorage，且只有選「記住帳號和密碼」才會儲存；帳號存在 globalState。
 3. 在「看板」檢視可展開「我的最愛」與「已開啟的看板」；「PTT: 開啟看板…」可用名稱開啟任何看板。
 4. 點文章開啟唯讀文件；右鍵可複製文章代碼或網址。
+5. 搜尋：點看板旁的放大鏡（或「PTT: 搜尋看板…」），選標題關鍵字、作者或推文數（負數搜噓文數），結果會出現在「搜尋結果」群組，可載入更多、開文章、移除；登出時清除。
 
 帳號在別處已登入時，只有你在對話框明確按「登出對方並登入」才會踢掉對方；預設保留對方連線。沒有自動重連，中斷後請用「PTT: 重新連線」。
 
@@ -20,6 +21,8 @@
 | `vscptt.connection.settleMs`                                                                  | 見 package.json | 畫面穩定等待毫秒             |
 | `vscptt.connection.stepTimeoutMs`                                                             | 見 package.json | 單一步驟逾時                 |
 | `vscptt.connection.keepAliveSeconds`                                                          | 見 package.json | 保持連線間隔（0 關閉）       |
+| `vscptt.article.maxPages`                                                                     | 30              | 一篇文章最多讀幾個畫面       |
+| `vscptt.search.maxSaved`                                                                      | 10              | 「搜尋結果」最多保留幾組搜尋 |
 | `vscptt.cache.latestPageSeconds` / `olderPageSeconds` / `articleSeconds` / `favoritesSeconds` | 見 package.json | 各類快取秒數                 |
 
 ## 開發
