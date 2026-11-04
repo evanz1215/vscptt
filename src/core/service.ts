@@ -401,6 +401,15 @@ export class PttService {
     return list;
   }
 
+  /** The board's newest page. PTT reopens a board where it was left, so jump to the end instead of trusting entry. */
+  private async latestList(board: string): Promise<BoardListScreen> {
+    const entered = await this.boardList(board, true);
+    this.session.send('$');
+    await this.session.flush();
+    const end = parseBoardList(this.session.lines);
+    return end && sameBoard(end.board, board) ? end : entered;
+  }
+
   /** Typing a number moves the cursor there and scrolls so it sits mid-screen (page = [n-10, n+9]). */
   private async selectNumber(n: number, mode: ListMode = 'normal'): Promise<BoardListScreen> {
     if (!isListNumber(n)) {
@@ -447,9 +456,7 @@ export class PttService {
     const none: BoardPage = { board, articles: [], pinned: [], hasOlder: false };
     let screen: BoardListScreen;
     if (!cursor) {
-      const first = search
-        ? await this.enterSearch(board, search)
-        : await this.boardList(board, true);
+      const first = search ? await this.enterSearch(board, search) : await this.latestList(board);
       if (!first) {
         return none;
       }

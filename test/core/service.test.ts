@@ -684,6 +684,29 @@ describe('cached results cannot be changed by callers (R6)', () => {
   });
 });
 
+describe('reading the newest page again after paging far back', () => {
+  it.each([[1], [3], [5]])(
+    'after %i "load more" steps, a refresh shows the newest articles again',
+    async (steps) => {
+      const { service } = await setup({ Dev: board(150, 2) });
+      const first = await service.getBoardPage('Dev');
+      let next = first.next;
+      for (let i = 0; i < steps && next; i++) {
+        next = (await service.getBoardPage('Dev', next)).next;
+      }
+
+      service.invalidate('Dev');
+      const again = await service.getBoardPage('Dev');
+
+      expect(again.articles.map((a) => a.listNumber)).toEqual(
+        first.articles.map((a) => a.listNumber)
+      );
+      expect(again.pinned.map((a) => a.title)).toEqual(first.pinned.map((a) => a.title));
+      expect(again.next).toEqual(first.next);
+    }
+  );
+});
+
 describe('favorites that span several screens', () => {
   const names = (n: number) =>
     Array.from({ length: n }, (_, i) => `Board${String(i + 1).padStart(2, '0')}`);
