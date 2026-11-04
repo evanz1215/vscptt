@@ -331,3 +331,109 @@ describe('refresh', () => {
     expect(() => tree.refresh()).not.toThrow();
   });
 });
+
+describe('search results', () => {
+  const title = { kind: 'title', text: '測試' } as const;
+  const author = { kind: 'author', text: 'bob' } as const;
+  const results = (board: string, numbers: number[], hasOlder = false) => ({
+    ...page(board, numbers, { hasOlder }),
+    articles: numbers.map((n) => summary(n, { board, search: title })),
+  });
+
+  it('has no search group until a search was added, then lists it as a node under the group', async () => {
+    const { tree, labels } = setup();
+    expect(await labels()).toEqual(['我的最愛', '已開啟的看板']);
+
+    tree.addSearch('Dev', title, results('Dev', [3, 2, 1]));
+
+    expect(await labels()).toEqual(['我的最愛', '已開啟的看板', '搜尋結果']);
+    const group = (await tree.getChildren())[2]!;
+    expect(await labels(group)).toEqual(['Dev：標題「測試」']);
+  });
+
+  it('shows the first page it was given without asking the server again', async () => {
+    const { connection, tree } = setup();
+    tree.addSearch('Dev', title, results('Dev', [3, 2, 1]));
+    const [node] = await tree.getChildren((await tree.getChildren())[2]!);
+    const children = await tree.getChildren(node);
+    expect(children.map((n) => n.kind)).toEqual(['article', 'article', 'article']);
+    expect(connection.read.calls.filter((c) => c.startsWith('searchBoard'))).toEqual([]);
+  });
+
+  it('gives result articles ids that differ from the same numbers in another search or the board', async () => {
+    const { tree } = setup();
+    tree.addSearch('Dev', title, results('Dev', [2, 1]));
+    tree.addSearch('Dev', author, {
+      ...results('Dev', [2, 1]),
+      articles: [summary(2), summary(1)],
+    });
+    const group = (await tree.getChildren())[2]!;
+    const ids: string[] = [];
+    for (const search of await tree.getChildren(group)) {
+      for (const article of await tree.getChildren(search)) {
+        ids.push(String(tree.getTreeItem(article).id));
+      }
+    }
+    expect(new Set(ids).size).toBe(4);
+  });
+
+  it('loads older results with a node that remembers which search it belongs to', async () => {
+    const { connection, tree } = setup();
+    connection.read.searchPages.set(`dev:${JSON.stringify(title)}`, [
+      results('Dev', [30, 29], true),
+      results('Dev', [28, 27]),
+    ]);
+    const id = tree.addSearch('Dev', title, results('Dev', [30, 29], true));
+    const [search] = await tree.getChildren((await tree.getChildren())[2]!);
+
+    const before = await tree.getChildren(search);
+    const more = before.at(-1)!;
+    expect(more.kind).toBe('loadMore');
+    const command = tree.getTreeItem(more).command!;
+    expect(command.arguments).toEqual(['Dev', id]);
+
+    await tree.loadMoreSearch(id);
+    const after = await tree.getChildren(search);
+    expect(after.filter((n) => n.kind === 'article')).toHaveLength(4);
+    expect(after.some((n) => n.kind === 'loadMore')).toBe(false);
+  });
+
+  it('replaces a repeated search instead of listing it twice, and keeps only the newest few', async () => {
+    const connection = new FakeTreeConnection();
+    const tree = new BoardsTreeProvider(
+      connection,
+      new OpenedBoards({ get: () => undefined, update: async () => {} }),
+      () => 2
+    );
+    tree.addSearch('Dev', title, results('Dev', [1]));
+    tree.addSearch('Dev', title, results('Dev', [1]));
+    tree.addSearch('Dev', author, results('Dev', [1]));
+    tree.addSearch('Dev', { kind: 'push', threshold: 5 }, results('Dev', [1]));
+
+    const group = (await tree.getChildren())[2]!;
+    const labels = (await tree.getChildren(group)).map((n) => String(tree.getTreeItem(n).label));
+    expect(labels).toEqual(['Dev：推文數超過 5', 'Dev：作者 bob']);
+  });
+
+  it('removes a search, and forgets all of them when the connection changes', async () => {
+    const { connection, tree, labels } = setup();
+    const a = tree.addSearch('Dev', title, results('Dev', [1]));
+    tree.addSearch('Dev', author, results('Dev', [1]));
+    tree.removeSearch(a);
+    expect(await labels((await tree.getChildren())[2]!)).toEqual(['Dev：作者 bob']);
+
+    connection.setState('disconnected');
+    connection.setState('ready');
+    expect(await labels()).toEqual(['我的最愛', '已開啟的看板']);
+  });
+
+  it('shows an error node instead of failing when a search cannot be run again', async () => {
+    const { connection, tree } = setup();
+    tree.addSearch('Dev', title, results('Dev', [1]));
+    tree.refresh(); // drops the loaded results, so opening the node searches again
+    connection.read.failWith = new ConnectionClosedError();
+    const [search] = await tree.getChildren((await tree.getChildren())[2]!);
+    const [node] = await tree.getChildren(search);
+    expect(node!.kind).toBe('message');
+  });
+});

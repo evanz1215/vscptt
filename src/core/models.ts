@@ -18,7 +18,16 @@ export interface ArticleSummary {
   push: string;
   mark: string;
   kind: ArticleKind;
+  /** Set on results of a search: `listNumber` is then the position in those results. */
+  search?: SearchQuery;
 }
+
+/** A search inside one board (/ title, a author, Z push count). Plain data, so it can travel inside a URI. */
+export type SearchQuery =
+  | { kind: 'title'; text: string }
+  | { kind: 'author'; text: string }
+  /** More than `threshold` pushes; a negative number means more than that many boos. */
+  | { kind: 'push'; threshold: number };
 
 export interface PageCursor {
   /** Return articles whose list number is below this one. */
@@ -79,6 +88,8 @@ export interface ArticleRef {
   pinnedIndex?: number;
   /** The list title; used to notice that the list changed underneath us. */
   title?: string;
+  /** Set when the number is a position in that search's results, not in the board. */
+  search?: SearchQuery;
   /** The list author; with the title, it catches a shifted list when titles repeat ("Re:" threads). */
   author?: string;
   /** Known id (from an earlier resolve); the article opened must have exactly this id. */

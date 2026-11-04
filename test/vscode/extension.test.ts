@@ -170,6 +170,7 @@ describe('what package.json declares matches what the code does', () => {
       'vscptt.copyArticleUrl',
       'vscptt.loadMore',
       'vscptt.openArticle',
+      'vscptt.removeSearch',
     ]);
   });
 });
@@ -450,5 +451,91 @@ describe('shutting down', () => {
     expect(mock.commands.size).toBe(0);
     expect(mock.contentProviders.size).toBe(0);
     expect(mock.statusItems[0]!.disposed).toBe(true);
+  });
+});
+
+describe('searching a board', () => {
+  const hits = (): FakeArticle[] => [
+    { id: 'M.1.A.001', author: 'bob', title: '[討論] 人月神話', body: ['mythical'] },
+    { id: 'M.2.A.002', author: 'amy', title: '[閒聊] 午餐', body: ['lunch'] },
+    { id: 'M.3.A.003', author: 'bob', title: '[心得] 人月神話 讀後感', body: ['review'] },
+  ];
+  const board = { kind: 'board', group: 'opened', board: 'Dev' } as const;
+  const searchGroup = (nodes: TreeNode[]) =>
+    nodes.find((n) => n.kind === 'group' && n.group === 'search');
+
+  it('asks what to search, shows the matches in their own group, and opens the clicked one', async () => {
+    const h = boot({ boards: { Dev: hits() } });
+    await h.login();
+
+    mock.quickPickAnswers.push('標題關鍵字');
+    mock.inputAnswers.push('人月');
+    await h.run('vscptt.search', board);
+
+    const group = searchGroup(await h.tree.getChildren())!;
+    expect(group).toBeDefined();
+    const [search] = await h.tree.getChildren(group);
+    expect(String(h.itemOf(search!).label)).toBe('Dev：標題「人月」');
+    const found = await h.tree.getChildren(search);
+    expect(found.map((n) => (n.kind === 'article' ? n.summary.title : ''))).toEqual([
+      '[心得] 人月神話 讀後感',
+      '[討論] 人月神話',
+    ]);
+
+    await h.invoke(found[0]!); // the newest hit
+    expect(mock.shownTexts).toHaveLength(1);
+    expect(mock.shownTexts[0]).toContain('review');
+    expect(mock.shownTexts[0]).not.toContain('無法');
+  });
+
+  it('says so when nothing matches, and adds nothing to the tree', async () => {
+    const h = boot({ boards: { Dev: hits() } });
+    await h.login();
+    mock.quickPickAnswers.push('作者');
+    mock.inputAnswers.push('nobody');
+    await h.run('vscptt.search', board);
+
+    expect(mock.messages.some((m) => m.message.includes('沒有符合'))).toBe(true);
+    expect(searchGroup(await h.tree.getChildren())).toBeUndefined();
+  });
+
+  it('asks for the board when started from the toolbar, and does nothing when the user backs out', async () => {
+    const h = boot({ boards: { Dev: hits() } });
+    await h.login();
+
+    mock.inputAnswers.push(undefined);
+    await h.run('vscptt.search');
+    expect(h.servers[0]!.searches).toEqual([]);
+
+    mock.inputAnswers.push('Dev');
+    mock.quickPickAnswers.push(undefined);
+    await h.run('vscptt.search');
+    expect(h.servers[0]!.searches).toEqual([]);
+  });
+
+  it('never sends text the prompt must not receive', async () => {
+    const h = boot({ boards: { Dev: hits() } });
+    await h.login();
+    mock.quickPickAnswers.push('標題關鍵字');
+    mock.inputAnswers.push('a\rb'); // what a paste can do even though the box would flag it
+    await h.run('vscptt.search', board);
+
+    expect(h.servers[0]!.searches).toEqual([]);
+    const validate = mock.inputBoxes.at(-1)!.validateInput!;
+    expect(validate('a\rb')).toBeTruthy();
+    expect(validate('人月')).toBeUndefined();
+  });
+
+  it('can remove a search again with the command of its node', async () => {
+    const h = boot({ boards: { Dev: hits() } });
+    await h.login();
+    mock.quickPickAnswers.push('標題關鍵字');
+    mock.inputAnswers.push('人月');
+    await h.run('vscptt.search', board);
+    const [search] = await h.tree.getChildren(searchGroup(await h.tree.getChildren())!);
+
+    await h.run('vscptt.removeSearch', search);
+
+    expect(searchGroup(await h.tree.getChildren())).toBeUndefined();
   });
 });

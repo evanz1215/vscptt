@@ -1,25 +1,34 @@
 import * as vscode from 'vscode';
 import { ConnectionClosedError, NotLoggedInError } from '../core/errors';
-import type { ArticleSummary, BoardPage, FavoriteEntry, PageCursor } from '../core/models';
+import type {
+  ArticleSummary,
+  BoardPage,
+  FavoriteEntry,
+  PageCursor,
+  SearchQuery,
+} from '../core/models';
+import { describeSearch } from '../core/search';
 import type { ConnectionState } from './connection';
 import { describeError } from './errorMessages';
 import type { OpenedBoards } from './openedBoards';
 
-export type Group = 'favorites' | 'opened';
+export type Group = 'favorites' | 'opened' | 'search';
 
 export type TreeNode =
   | { kind: 'login'; connecting: boolean }
   | { kind: 'group'; group: Group }
   | { kind: 'board'; group: Group; board: string; category?: string; title?: string }
   | { kind: 'pinned'; group: Group; board: string; count: number }
-  | { kind: 'article'; group: Group; summary: ArticleSummary }
-  | { kind: 'loadMore'; group: Group; board: string }
+  | { kind: 'search'; id: number; board: string; query: SearchQuery }
+  | { kind: 'article'; group: Group; summary: ArticleSummary; searchId?: number }
+  | { kind: 'loadMore'; group: Group; board: string; searchId?: number }
   | { kind: 'message'; text: string; command?: string; icon?: string };
 
 /** What the tree reads PTT through. PttService satisfies it. */
 export interface ReadService {
   getFavorites(): Promise<FavoriteEntry[]>;
   getBoardPage(board: string, cursor?: PageCursor): Promise<BoardPage>;
+  searchBoard(board: string, query: SearchQuery, cursor?: PageCursor): Promise<BoardPage>;
   invalidate(board?: string): void;
 }
 
@@ -51,14 +60,21 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
   /** Pages loaded per board (lower-case name), newest page first. Shared by both groups. */
   private readonly pages = new Map<string, BoardPage[]>();
   private readonly loading = new Map<string, Promise<BoardPage[]>>();
+  /** Searches the user ran this session, newest first, with the pages each has loaded. Lost on logout. */
+  private searches: Array<{ id: number; board: string; query: SearchQuery }> = [];
+  private readonly searchPages = new Map<number, BoardPage[]>();
+  private nextSearchId = 1;
   private readonly subscription: vscode.Disposable;
 
   constructor(
     private readonly connection: TreeConnection,
-    private readonly opened: OpenedBoards
+    private readonly opened: OpenedBoards,
+    private readonly maxSearches: () => number = () => 10
   ) {
     this.subscription = connection.onDidChangeState(() => {
       this.pages.clear(); // a new connection means anything loaded before may be stale
+      this.searches = [];
+      this.searchPages.clear();
       this.emitter.fire(undefined);
     });
   }
@@ -71,6 +87,7 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
         this.connection.service.invalidate(board);
       } else {
         this.pages.clear();
+        this.searchPages.clear(); // the searches stay listed and run again when opened
         this.connection.service.invalidate();
       }
     } catch {
@@ -95,6 +112,52 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
     this.emitter.fire(undefined);
   }
 
+  /**
+   * Adds a search to the "搜尋結果" group (a repeat of the same search replaces the old entry) and returns its
+   * id. `first` is the page already fetched for it.
+   */
+  addSearch(board: string, query: SearchQuery, first: BoardPage): number {
+    const same = JSON.stringify(query);
+    for (const old of this.searches.filter(
+      (s) => s.board.toLowerCase() === board.toLowerCase() && JSON.stringify(s.query) === same
+    )) {
+      this.searchPages.delete(old.id);
+    }
+    this.searches = this.searches.filter(
+      (s) => s.board.toLowerCase() !== board.toLowerCase() || JSON.stringify(s.query) !== same
+    );
+    const id = this.nextSearchId++;
+    this.searches.unshift({ id, board, query });
+    for (const dropped of this.searches.splice(Math.max(this.maxSearches(), 1))) {
+      this.searchPages.delete(dropped.id);
+    }
+    this.searchPages.set(id, [first]);
+    this.emitter.fire(undefined);
+    return id;
+  }
+
+  removeSearch(id: number): void {
+    this.searches = this.searches.filter((s) => s.id !== id);
+    this.searchPages.delete(id);
+    this.emitter.fire(undefined);
+  }
+
+  /** Appends the next older page of a search's results. Errors are left to the caller. */
+  async loadMoreSearch(id: number): Promise<void> {
+    const entry = this.searches.find((s) => s.id === id);
+    const loaded = this.searchPages.get(id);
+    const last = loaded?.at(-1);
+    if (!entry || !loaded || !last?.hasOlder || !last.next) {
+      return;
+    }
+    const next = await this.connection.service.searchBoard(entry.board, entry.query, last.next);
+    if (this.searchPages.get(id)?.at(-1) !== last) {
+      return;
+    }
+    loaded.push(next);
+    this.emitter.fire(undefined);
+  }
+
   dispose(): void {
     this.subscription.dispose();
     this.emitter.dispose();
@@ -108,7 +171,13 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
     }
     switch (node.kind) {
       case 'group':
-        return node.group === 'favorites' ? this.favoriteNodes() : this.openedNodes();
+        return node.group === 'favorites'
+          ? this.favoriteNodes()
+          : node.group === 'opened'
+            ? this.openedNodes()
+            : this.searches.map((s) => ({ kind: 'search' as const, ...s }));
+      case 'search':
+        return this.searchChildren(node.id);
       case 'board':
         return this.boardChildren(node.group, node.board);
       case 'pinned':
@@ -132,11 +201,21 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
       }
       case 'group': {
         const item = new vscode.TreeItem(
-          node.group === 'favorites' ? '我的最愛' : '已開啟的看板',
+          node.group === 'favorites'
+            ? '我的最愛'
+            : node.group === 'opened'
+              ? '已開啟的看板'
+              : '搜尋結果',
           vscode.TreeItemCollapsibleState.Expanded
         );
         item.id = `group:${node.group}`;
-        item.iconPath = icon(node.group === 'favorites' ? 'star-full' : 'folder-opened');
+        item.iconPath = icon(
+          node.group === 'favorites'
+            ? 'star-full'
+            : node.group === 'opened'
+              ? 'folder-opened'
+              : 'search'
+        );
         item.contextValue = 'group';
         return item;
       }
@@ -147,6 +226,16 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
         item.tooltip = node.title ?? node.board;
         item.iconPath = icon('comment-discussion');
         item.contextValue = 'board';
+        return item;
+      }
+      case 'search': {
+        const item = new vscode.TreeItem(
+          `${node.board}：${describeSearch(node.query)}`,
+          vscode.TreeItemCollapsibleState.Expanded
+        );
+        item.id = `search:${node.id}`;
+        item.iconPath = icon('search');
+        item.contextValue = 'search';
         return item;
       }
       case 'pinned': {
@@ -163,10 +252,14 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
         return this.articleItem(node);
       case 'loadMore': {
         const item = new vscode.TreeItem('載入更多（較舊的文章）…');
-        item.id = `more:${node.group}:${node.board.toLowerCase()}`;
+        item.id = `more:${node.group}:${node.searchId ?? ''}:${node.board.toLowerCase()}`;
         item.iconPath = icon('chevron-down');
         item.contextValue = 'loadMore';
-        item.command = { command: 'vscptt.loadMore', title: '載入更多', arguments: [node.board] };
+        item.command = {
+          command: 'vscptt.loadMore',
+          title: '載入更多',
+          arguments: node.searchId === undefined ? [node.board] : [node.board, node.searchId],
+        };
         return item;
       }
       case 'message': {
@@ -189,6 +282,9 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
         return [
           { kind: 'group', group: 'favorites' },
           { kind: 'group', group: 'opened' },
+          ...(this.searches.length > 0
+            ? [{ kind: 'group' as const, group: 'search' as const }]
+            : []),
         ];
       case 'connecting':
         return [{ kind: 'login', connecting: true }];
@@ -261,6 +357,35 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
     }
   }
 
+  private async searchChildren(id: number): Promise<TreeNode[]> {
+    const entry = this.searches.find((s) => s.id === id);
+    if (!entry) {
+      return [];
+    }
+    try {
+      let pages = this.searchPages.get(id);
+      if (!pages) {
+        pages = [await this.connection.service.searchBoard(entry.board, entry.query)];
+        if (this.searches.some((s) => s.id === id)) {
+          this.searchPages.set(id, pages); // not if it was removed while the search ran
+        }
+      }
+      const nodes: TreeNode[] = [];
+      for (const page of pages) {
+        for (const summary of page.articles) {
+          nodes.push({ kind: 'article', group: 'search', summary, searchId: id });
+        }
+      }
+      const last = pages.at(-1)!;
+      if (last.hasOlder && last.next) {
+        nodes.push({ kind: 'loadMore', group: 'search', board: entry.board, searchId: id });
+      }
+      return nodes.length > 0 ? nodes : [{ kind: 'message', text: '沒有符合的文章', icon: 'info' }];
+    } catch (error) {
+      return [errorNode(error)];
+    }
+  }
+
   private async pinnedChildren(group: Group, board: string): Promise<TreeNode[]> {
     try {
       const pages = await this.firstPage(board);
@@ -294,7 +419,8 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
     const { summary } = node;
     const item = new vscode.TreeItem(summary.title);
     const where = summary.isPinned ? `p${summary.pinnedIndex}` : String(summary.listNumber);
-    item.id = `article:${node.group}:${summary.board.toLowerCase()}:${where}`;
+    const searchPart = node.searchId === undefined ? '' : `:${node.searchId}`;
+    item.id = `article:${node.group}${searchPart}:${summary.board.toLowerCase()}:${where}`;
     item.description = [summary.push ? `[${summary.push}]` : '', summary.author, summary.date]
       .filter(Boolean)
       .join(' ');

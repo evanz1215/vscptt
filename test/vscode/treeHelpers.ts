@@ -1,6 +1,12 @@
 import * as vscode from 'vscode';
 import { ConnectionClosedError } from '../../src/core/errors';
-import type { ArticleSummary, BoardPage, FavoriteEntry, PageCursor } from '../../src/core/models';
+import type {
+  ArticleSummary,
+  BoardPage,
+  FavoriteEntry,
+  PageCursor,
+  SearchQuery,
+} from '../../src/core/models';
 import type { ConnectionState } from '../../src/vscode/connection';
 import type { ReadService, TreeConnection } from '../../src/vscode/boardsTree';
 
@@ -74,6 +80,24 @@ export class FakeReadService implements ReadService {
       : list[0];
     if (!found) {
       throw new Error(`no page for ${board} ${cursor?.before ?? 'latest'}`);
+    }
+    return found;
+  }
+
+  /** Search results by "board:query"; index 0 is the first page. */
+  searchPages = new Map<string, BoardPage[]>();
+
+  async searchBoard(board: string, query: SearchQuery, cursor?: PageCursor): Promise<BoardPage> {
+    this.calls.push(
+      `searchBoard:${board}:${JSON.stringify(query)}:${cursor ? cursor.before : 'latest'}`
+    );
+    await this.pause();
+    const list = this.searchPages.get(`${board.toLowerCase()}:${JSON.stringify(query)}`) ?? [];
+    const found = cursor
+      ? list.find((p) => p.articles[0]?.listNumber === cursor.before - 1)
+      : list[0];
+    if (!found) {
+      throw new Error('no search page');
     }
     return found;
   }

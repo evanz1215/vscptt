@@ -11,6 +11,7 @@ import { WaitTimeoutError, waitFor } from '../queue/waitFor';
 import {
   isAnyKeyPrompt,
   isBoardSelectPrompt,
+  isSearchPrompt,
   isLogoutConfirm,
   isMainMenu,
 } from '../screens/prompts';
@@ -244,6 +245,9 @@ export class Session {
           await this.answer(`N${Keys.ENTER}`, isLogoutConfirm, 'the exit prompt to close', 3000);
         } else if (isBoardSelectPrompt(lines)) {
           await this.answer(Keys.ENTER, isBoardSelectPrompt, 'the board prompt to close', 3000);
+        } else if (isSearchPrompt(lines)) {
+          // An empty answer cancels the search prompt; Left would only move the text cursor.
+          await this.answer(Keys.ENTER, isSearchPrompt, 'the search prompt to close', 3000);
         } else {
           const key = isAnyKeyPrompt(lines) ? Keys.SPACE : Keys.LEFT;
           await this.sendAndWaitChange(key, 'the screen to change', 3000);

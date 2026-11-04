@@ -15,6 +15,8 @@ export interface FakeArticle {
   title: string;
   date?: string;
   push?: string;
+  /** Number of boos, for the push-count search with a negative threshold. */
+  boo?: number;
   mark?: string;
   kind?: 'normal' | 'reply' | 'deleted';
   body?: string[];
@@ -51,6 +53,8 @@ type Mode =
   | 'select'
   | 'boardWelcome'
   | 'list'
+  | 'searchPrompt'
+  | 'noResult'
   | 'popup'
   | 'article'
   | 'logoutConfirm'
@@ -145,6 +149,12 @@ export class FakeBbs {
   private articleLines: string[] = [];
   private articleStart = 0;
   private currentArticle: FakeArticle | undefined;
+  /** Observed: after a search the list shows only the matches ("系列"), numbered 1..N, until Left. */
+  private searching = false;
+  private saved: { items: FakeArticle[]; cursor: number; top: number } | undefined;
+  private searchKey = '';
+  /** Every search the client typed, as [key, text]. */
+  readonly searches: Array<[string, string]> = [];
 
   constructor(options: FakeBbsOptions = {}) {
     this.options = {
@@ -210,8 +220,12 @@ export class FakeBbs {
       case 'duplicate':
       case 'deleteAttempts':
       case 'select':
+      case 'searchPrompt':
       case 'logoutConfirm':
         return this.onLine(key);
+      case 'noResult':
+        this.mode = 'list';
+        return this.render();
       case 'notice':
         if (key === 'ENTER') this.nextAfterLogin();
         return;
@@ -263,7 +277,9 @@ export class FakeBbs {
 
   /** Prompts show what is typed, so merely typing changes the screen. */
   private echo(): void {
-    if (['select', 'duplicate', 'deleteAttempts', 'logoutConfirm'].includes(this.mode)) {
+    if (
+      ['select', 'duplicate', 'deleteAttempts', 'logoutConfirm', 'searchPrompt'].includes(this.mode)
+    ) {
       this.render();
     }
   }
@@ -320,6 +336,8 @@ export class FakeBbs {
         return this.nextAfterLogin();
       case 'select':
         return this.submitBoardName(line);
+      case 'searchPrompt':
+        return this.submitSearch(line);
       case 'logoutConfirm':
         this.mode = line.toLowerCase() === 'y' ? 'goodbye' : 'main';
         return this.render();
@@ -419,6 +437,8 @@ export class FakeBbs {
     if (remembered) {
       ({ cursor: this.cursor, top: this.top } = remembered);
     }
+    this.searching = false;
+    this.saved = undefined;
     this.buffer = '';
     this.mode = 'boardWelcome';
     this.render();
@@ -442,7 +462,19 @@ export class FakeBbs {
         this.cursor = Math.max(this.cursor - 1, 0);
         if (this.cursor < this.top) this.top = this.cursor;
         return this.render();
+      case '/':
+      case 'a':
+      case 'Z':
+        this.searchKey = key;
+        this.mode = 'searchPrompt';
+        return this.render();
       case 'LEFT':
+        if (this.searching && this.saved) {
+          ({ items: this.items, cursor: this.cursor, top: this.top } = this.saved);
+          this.searching = false;
+          this.saved = undefined;
+          return this.render();
+        }
         this.lastPosition.set(this.currentBoard, { cursor: this.cursor, top: this.top });
         this.mode = this.listParent;
         return this.render();
@@ -465,9 +497,44 @@ export class FakeBbs {
     }
   }
 
+  private submitSearch(text: string): void {
+    this.buffer = '';
+    this.mode = 'list';
+    if (text === '') {
+      return this.render(); // an empty answer cancels
+    }
+    this.searches.push([this.searchKey, text]);
+    const needle = text.toLowerCase();
+    const pushOf = (a: FakeArticle) => (a.push === '爆' ? 100 : Number(a.push || 0));
+    const matches = this.items.filter((a) => {
+      if (a.pinned) return false;
+      if (this.searchKey === '/') return a.title.toLowerCase().includes(needle);
+      if (this.searchKey === 'a') return a.author.toLowerCase().includes(needle);
+      const n = Number(text);
+      return n >= 0 ? pushOf(a) > n : (a.boo ?? 0) > -n;
+    });
+    if (matches.length === 0) {
+      this.mode = 'noResult';
+      return this.render();
+    }
+    if (!this.searching) {
+      this.saved = { items: this.items, cursor: this.cursor, top: this.top };
+    }
+    this.searching = true;
+    this.items = matches;
+    this.cursor = matches.length - 1;
+    this.top = Math.max(matches.length - WINDOW, 0);
+    this.render();
+  }
+
+  /** The number PTT shows: the article's own, or its position among the results after a search. */
+  private numberOf(a: FakeArticle): number | undefined {
+    return this.searching ? this.items.indexOf(a) + 1 : a.number;
+  }
+
   /** Observed: a number jump moves the cursor; the window only scrolls if the target is off screen. */
   private jump(n: number): void {
-    let idx = this.items.findIndex((a) => a.number === n);
+    let idx = this.items.findIndex((a) => this.numberOf(a) === n);
     if (idx < 0) {
       idx = n > 0 ? this.items.length - 1 : 0;
     }
@@ -569,6 +636,22 @@ export class FakeBbs {
         return this.screen([...Array(23).fill(''), ' ▄ ▄ ▄  請按任意鍵繼續 ▄ ▄ ▄']);
       case 'list':
         return this.screen(this.listRows());
+      case 'searchPrompt': {
+        const rows = this.listRows();
+        const label =
+          this.searchKey === '/'
+            ? '搜尋標題:'
+            : this.searchKey === 'a'
+              ? '搜尋作者:'
+              : '搜尋推文數高於多少 (<0則搜噓文數) 的文章:';
+        rows[23] = `${label} ${this.buffer}`;
+        return this.screen(rows);
+      }
+      case 'noResult': {
+        const rows = this.listRows();
+        rows[23] = ' ◆  找不到符合條件的文章。                                      [按任意鍵繼續]';
+        return this.screen(rows);
+      }
       case 'popup': {
         const rows = this.listRows();
         const a = this.items[this.cursor]!;
@@ -634,14 +717,14 @@ export class FakeBbs {
 
   private listRows(): string[] {
     const rows = Array(24).fill('');
-    rows[0] = `【板主:tester】    [測試] Fake board                看板《${this.currentBoard}》`;
+    rows[0] = `【板主:tester】    [測試] Fake board                ${this.searching ? '系列' : '看板'}《${this.currentBoard}》`;
     rows[1] = '[→ ]閱讀 [z]精華區 [Tab]文摘 [s]選擇看板 [b]進板 [i]看板設定';
     rows[2] = '   編號    日 期 作  者       文  章  標  題                            人氣:1';
     for (let i = 0; i < WINDOW; i++) {
       const a = this.items[this.top + i];
       if (!a) continue;
       const cursor = this.top + i === this.cursor ? '>' : ' ';
-      const numberField = a.pinned ? '   ★  ' : String(a.number).padStart(6);
+      const numberField = a.pinned ? '   ★  ' : String(this.numberOf(a)).padStart(6);
       const type = a.kind === 'reply' ? 'R:' : '□ ';
       const title = a.kind === 'deleted' ? '(本文已被刪除) [x]' : a.title;
       const author = a.kind === 'deleted' ? '-' : a.author;
@@ -649,7 +732,7 @@ export class FakeBbs {
         `${cursor}${numberField} ${a.mark ?? ' '}${(a.push ?? '').padStart(2)}${(a.date ?? '11/01').padStart(5)} ` +
         `${author.padEnd(12)} ${type} ${title}`;
     }
-    rows[23] = ' 文章列表  (^P)發表 (y)回應 (X)推文 (d)刪除 (→ )閱讀 (b)進板  (← )離開 (h)說明';
+    rows[23] = ` ${this.searching ? '系列文章' : '文章列表'}  (^P)發表 (y)回應 (X)推文 (d)刪除 (→ )閱讀 (b)進板  (← )離開 (h)說明`;
     return rows;
   }
 

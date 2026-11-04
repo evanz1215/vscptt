@@ -113,7 +113,12 @@ export enum ViewColumn {
 
 interface MockState {
   messages: Array<{ level: 'info' | 'warning' | 'error'; message: string; items: string[] }>;
-  inputBoxes: Array<{ prompt?: string; password?: boolean; value?: string }>;
+  inputBoxes: Array<{
+    prompt?: string;
+    password?: boolean;
+    value?: string;
+    validateInput?: (value: string) => string | undefined;
+  }>;
   inputAnswers: Array<string | undefined>;
   quickPickAnswers: Array<string | undefined>;
   quickPickCalls: string[][];
@@ -196,7 +201,14 @@ export const window = {
   showInformationMessage: record('info'),
   showWarningMessage: record('warning'),
   showErrorMessage: record('error'),
-  async showInputBox(options: { prompt?: string; password?: boolean; value?: string } = {}) {
+  async showInputBox(
+    options: {
+      prompt?: string;
+      password?: boolean;
+      value?: string;
+      validateInput?: (value: string) => string | undefined;
+    } = {}
+  ) {
     mock.inputBoxes.push(options);
     return mock.inputAnswers.shift();
   },

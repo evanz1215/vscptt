@@ -16,12 +16,15 @@ import type {
   FavoriteEntry,
   PageCursor,
   ResolvedArticle,
+  SearchQuery,
 } from './models';
 import { WaitTimeoutError } from './queue/waitFor';
+import { normalizeSearch, toSearchInput } from './search';
 import { type AidPopup, idFromUrl, parseAidPopup } from './screens/aidPopup';
 import { type ParsedArticle, mergePages, parseArticle, parseArticlePage } from './screens/article';
 import {
   type BoardListScreen,
+  type ListMode,
   type ListRow,
   isBoardList,
   parseBoardList,
@@ -33,6 +36,8 @@ import {
   isBoardSelectPrompt,
   isLogoutConfirm,
   isMainMenu,
+  isNoSearchResult,
+  isSearchPrompt,
 } from './screens/prompts';
 import type { Credentials, Session, SessionState } from './session/session';
 
@@ -158,6 +163,29 @@ export class PttService {
     );
   }
 
+  /**
+   * Searches one board (title, author or push count). Same shape as getBoardPage: newest result first, older
+   * ones through `cursor`; `listNumber` is the position among the results. The search is typed again for every
+   * page, because the result screen does not say what was searched for.
+   */
+  async searchBoard(board: string, rawQuery: SearchQuery, cursor?: PageCursor): Promise<BoardPage> {
+    assertBoardName(board);
+    const query = normalizeSearch(rawQuery);
+    this.session.assertReady();
+    if (cursor && !isListNumber(cursor.before)) {
+      throw new InvalidArgumentError(
+        `cursor.before must be a whole number from 1 to ${MAX_LIST_NUMBER}`
+      );
+    }
+    const where = cursor ? `before:${cursor.before}` : 'latest';
+    const key = `${board.toLowerCase()}:search:${JSON.stringify(query)}:${where}`;
+    return structuredClone(
+      await this.pages.getOrLoad(key, cursor ? this.ttl.olderPage : this.ttl.latestPage, () =>
+        this.session.run(() => this.guard(() => this.loadPage(board, cursor, query)))
+      )
+    );
+  }
+
   /** Finds the stable id of a list entry (press `Q` on it). */
   async resolveArticleId(ref: ArticleRef): Promise<ResolvedArticle> {
     assertRef(ref);
@@ -165,7 +193,7 @@ export class PttService {
     return this.session.run(() =>
       this.guard(async () => {
         await this.position(ref);
-        const popup = await this.readPopup(ref.board);
+        const popup = await this.readPopup(ref.board, listMode(ref));
         checkId(ref, popup.id);
         return { board: popup.board, id: popup.id, aid: popup.aid, url: popup.url };
       })
@@ -295,6 +323,39 @@ export class PttService {
     return list;
   }
 
+  /**
+   * Runs a search in `board` and returns the results screen, or null when nothing matched. Types only what
+   * toSearchInput accepted, answers only prompts found on their fixed last row, and leaves the normal list
+   * showing when there are no results.
+   */
+  private async enterSearch(board: string, query: SearchQuery): Promise<BoardListScreen | null> {
+    const input = toSearchInput(query);
+    const s = this.session;
+    await this.boardList(board, true);
+    s.send(input.key);
+    await s.waitFor(isSearchPrompt, 'the search prompt');
+    s.send(input.text, Keys.ENTER);
+    const outcome = await s.waitFor(
+      (l) =>
+        isBoardList(l, 'search')
+          ? 'results'
+          : isNoSearchResult(l) && isAnyKeyPrompt(l) && !isSearchPrompt(l)
+            ? 'none'
+            : false,
+      'the search results'
+    );
+    if (outcome === 'none') {
+      await s.sendAndWaitChange(Keys.SPACE, 'the list after the notice');
+      await s.waitFor((l) => isBoardList(l), 'the list after the notice');
+      return null;
+    }
+    const screen = parseBoardList(s.lines, 'search');
+    if (!screen || !sameBoard(screen.board, board)) {
+      throw new ArticleMismatchError('The search results belong to another board');
+    }
+    return screen;
+  }
+
   /** The list screen of `board`; `fresh` re-enters it so the cursor and window are in their entry position. */
   private async boardList(board: string, fresh: boolean): Promise<BoardListScreen> {
     if (!fresh) {
@@ -311,13 +372,13 @@ export class PttService {
   }
 
   /** Typing a number moves the cursor there and scrolls so it sits mid-screen (page = [n-10, n+9]). */
-  private async selectNumber(n: number): Promise<BoardListScreen> {
+  private async selectNumber(n: number, mode: ListMode = 'normal'): Promise<BoardListScreen> {
     if (!isListNumber(n)) {
       throw new InvalidArgumentError(`Not a list number: ${n}`); // never type anything but plain digits
     }
     const s = this.session;
     const matches = (l: string[]) => {
-      const screen = parseBoardList(l);
+      const screen = parseBoardList(l, mode);
       return screen?.selected?.number === n ? screen : false;
     };
     const description = `list row ${n} to be selected`;
@@ -340,46 +401,64 @@ export class PttService {
       if (now) {
         return now;
       }
-      if (parseBoardList(s.lines)?.selected) {
+      if (parseBoardList(s.lines, mode)?.selected) {
         throw new ArticleMismatchError(`The list has no row ${n} any more`);
       }
     }
     return s.waitFor(matches, description, Math.max(limit - quick, 1000));
   }
 
-  private async loadPage(board: string, cursor: PageCursor | undefined): Promise<BoardPage> {
+  private async loadPage(
+    board: string,
+    cursor: PageCursor | undefined,
+    search?: SearchQuery
+  ): Promise<BoardPage> {
+    const mode: ListMode = search ? 'search' : 'normal';
+    const none: BoardPage = { board, articles: [], pinned: [], hasOlder: false };
     let screen: BoardListScreen;
     if (!cursor) {
-      screen = await this.boardList(board, true);
+      const first = search
+        ? await this.enterSearch(board, search)
+        : await this.boardList(board, true);
+      if (!first) {
+        return none;
+      }
+      screen = first;
     } else if (cursor.before <= 1) {
-      screen = await this.boardList(board, false);
-      return { board: screen.board, articles: [], pinned: [], hasOlder: false };
+      return search ? none : { ...none, board: (await this.boardList(board, false)).board };
     } else {
-      await this.boardList(board, false);
+      if (search) {
+        if (!(await this.enterSearch(board, search))) {
+          return none;
+        }
+      } else {
+        await this.boardList(board, false);
+      }
       // Start from the top so the window is known: rows 1..20. Jumping to a row that is already on screen
       // only moves the cursor, so the next target must lie beyond that first screen to make the list scroll
       // (it then shows [target-10, target+9]). If everything we need is on the first screen, use it as is.
-      const start = await this.selectNumber(1);
+      const start = await this.selectNumber(1, mode);
       if (cursor.before - 1 <= LIST_PAGE_SIZE) {
         screen = start;
       } else {
         const target = cursor.before - 10 > LIST_PAGE_SIZE ? cursor.before - 10 : cursor.before - 1;
-        screen = await this.selectNumber(target);
+        screen = await this.selectNumber(target, mode);
       }
     }
 
     const numbered = screen.rows
       .filter((r) => !r.isPinned && r.number !== undefined && (!cursor || r.number < cursor.before))
       .sort((a, b) => b.number! - a.number!);
-    const articles = numbered.map((r) => toSummary(screen.board, r));
+    const articles = numbered.map((r) => toSummary(screen.board, r, undefined, search));
     if (cursor && articles[0]?.listNumber !== cursor.before - 1) {
       throw new ArticleMismatchError(
         `The list changed while paging: expected to see row ${cursor.before - 1} next`
       );
     }
-    const pinned = cursor
-      ? []
-      : screen.rows.filter((r) => r.isPinned).map((r, i) => toSummary(screen.board, r, i));
+    const pinned =
+      cursor || search
+        ? []
+        : screen.rows.filter((r) => r.isPinned).map((r, i) => toSummary(screen.board, r, i));
     const oldest = articles.at(-1)?.listNumber;
     const hasOlder = oldest !== undefined && oldest > 1;
     return {
@@ -395,7 +474,12 @@ export class PttService {
   private async position(ref: ArticleRef): Promise<ListRow> {
     const s = this.session;
     let row: ListRow;
-    if (ref.isPinned) {
+    if (ref.search) {
+      if (!(await this.enterSearch(ref.board, ref.search))) {
+        throw new ArticleMismatchError('The search has no results any more');
+      }
+      row = (await this.selectNumber(ref.listNumber!, 'search')).selected!;
+    } else if (ref.isPinned) {
       await this.boardList(ref.board, true);
       // PTT returns to where the board was left, so the pinned rows (always last) may be off screen: go to the end.
       s.send('$');
@@ -435,12 +519,12 @@ export class PttService {
   }
 
   /** `Q` on the selected entry shows its article code and URL; any key closes the box. */
-  private async readPopup(board: string): Promise<AidPopup> {
+  private async readPopup(board: string, mode: ListMode = 'normal'): Promise<AidPopup> {
     const s = this.session;
     s.send('Q');
     const popup = await s.waitFor(parseAidPopup, 'the article code box');
     s.send(Keys.SPACE);
-    await s.waitFor((l) => isBoardList(l), 'the list after the article code box');
+    await s.waitFor((l) => isBoardList(l, mode), 'the list after the article code box');
     if (!sameBoard(popup.board, board)) {
       throw new ArticleMismatchError(`The article belongs to ${popup.board}, not ${board}`);
     }
@@ -454,7 +538,8 @@ export class PttService {
     if (isDeletedRow(row)) {
       throw new ArticleDeletedError();
     }
-    const popup = await this.readPopup(ref.board);
+    const mode = listMode(ref);
+    const popup = await this.readPopup(ref.board, mode);
     checkId(ref, popup.id);
 
     const cached = this.articles.get(articleKey(popup.board, popup.id));
@@ -465,7 +550,7 @@ export class PttService {
     s.send(Keys.RIGHT);
     const { pages, truncated } = await this.readPages();
     s.send(Keys.LEFT);
-    await s.waitFor((l) => isBoardList(l), 'the list after leaving the article');
+    await s.waitFor((l) => isBoardList(l, mode), 'the list after leaving the article');
 
     const article = buildArticle(ref, popup, parseArticle(mergePages(pages)), truncated);
     if (article.verified) {
@@ -569,8 +654,14 @@ function buildArticle(
   };
 }
 
-function toSummary(board: string, row: ListRow, pinnedIndex?: number): ArticleSummary {
+function toSummary(
+  board: string,
+  row: ListRow,
+  pinnedIndex?: number,
+  search?: SearchQuery
+): ArticleSummary {
   return {
+    ...(search ? { search } : {}),
     board,
     listNumber: row.number,
     pinnedIndex: row.isPinned ? pinnedIndex : undefined,
@@ -612,8 +703,18 @@ function assertBoardName(name: string): void {
   }
 }
 
+function listMode(ref: ArticleRef): ListMode {
+  return ref.search ? 'search' : 'normal';
+}
+
 function assertRef(ref: ArticleRef): void {
   assertBoardName(ref.board);
+  if (ref.search) {
+    toSearchInput(ref.search);
+    if (ref.isPinned) {
+      throw new InvalidArgumentError('Search results have no pinned articles');
+    }
+  }
   if (ref.isPinned) {
     if (!Number.isSafeInteger(ref.pinnedIndex) || ref.pinnedIndex! < 0 || ref.pinnedIndex! > 99) {
       throw new InvalidArgumentError('A pinned article needs pinnedIndex (0 to 99)');

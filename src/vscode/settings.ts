@@ -7,6 +7,10 @@ export interface VscpttSettings {
   settleMs: number;
   stepTimeoutMs: number;
   keepAliveSeconds: number;
+  /** Articles longer than this many screens are cut off. */
+  articleMaxPages: number;
+  /** How many searches the "搜尋結果" group keeps. */
+  searchMaxSaved: number;
   cache: {
     latestPageSeconds: number;
     olderPageSeconds: number;
@@ -22,6 +26,8 @@ export const SETTING_KEYS = [
   'connection.settleMs',
   'connection.stepTimeoutMs',
   'connection.keepAliveSeconds',
+  'article.maxPages',
+  'search.maxSaved',
   'cache.latestPageSeconds',
   'cache.olderPageSeconds',
   'cache.articleSeconds',
@@ -34,6 +40,8 @@ export const DEFAULT_SETTINGS: VscpttSettings = {
   settleMs: 80,
   stepTimeoutMs: 5000,
   keepAliveSeconds: 30,
+  articleMaxPages: 30,
+  searchMaxSaved: 10,
   cache: {
     latestPageSeconds: 60,
     olderPageSeconds: 600,
@@ -65,6 +73,8 @@ export function readSettings(get: (key: (typeof SETTING_KEYS)[number]) => unknow
     stepTimeoutMs: number(get('connection.stepTimeoutMs'), d.stepTimeoutMs, 1000, 60_000),
     // 0 turns the keep-alive off; anything shorter than 10 s would only add traffic.
     keepAliveSeconds: keepAlive === 0 ? 0 : Math.max(keepAlive, 10),
+    articleMaxPages: Math.round(number(get('article.maxPages'), d.articleMaxPages, 1, 100)),
+    searchMaxSaved: Math.round(number(get('search.maxSaved'), d.searchMaxSaved, 1, 30)),
     cache: {
       latestPageSeconds: number(
         get('cache.latestPageSeconds'),
@@ -94,6 +104,7 @@ export function toSessionOptions(
 
 export function toServiceOptions(s: VscpttSettings): PttServiceOptions {
   return {
+    maxArticlePages: s.articleMaxPages,
     cacheTtlSeconds: {
       latestPage: s.cache.latestPageSeconds,
       olderPage: s.cache.olderPageSeconds,

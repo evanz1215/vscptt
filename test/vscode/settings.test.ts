@@ -22,6 +22,8 @@ describe('readSettings', () => {
         'connection.settleMs': 120,
         'connection.stepTimeoutMs': 8000,
         'connection.keepAliveSeconds': 45,
+        'article.maxPages': 12,
+        'search.maxSaved': 5,
         'cache.latestPageSeconds': 10,
         'cache.olderPageSeconds': 20,
         'cache.articleSeconds': 30,
@@ -34,6 +36,8 @@ describe('readSettings', () => {
       settleMs: 120,
       stepTimeoutMs: 8000,
       keepAliveSeconds: 45,
+      articleMaxPages: 12,
+      searchMaxSaved: 5,
       cache: {
         latestPageSeconds: 10,
         olderPageSeconds: 20,
@@ -64,8 +68,12 @@ describe('readSettings', () => {
         'connection.keepAliveSeconds': 3,
         'cache.latestPageSeconds': -5,
         'cache.articleSeconds': 1e12,
+        'article.maxPages': 100_000,
+        'search.maxSaved': 0.2,
       })
     );
+    expect(s.articleMaxPages).toBe(100);
+    expect(s.searchMaxSaved).toBe(1);
     expect(s.settleMs).toBe(20);
     expect(s.stepTimeoutMs).toBe(60_000);
     expect(s.keepAliveSeconds).toBe(10); // anything shorter would only add traffic
@@ -95,6 +103,7 @@ describe('option mapping', () => {
         'connection.settleMs': 100,
         'connection.stepTimeoutMs': 7000,
         'connection.keepAliveSeconds': 20,
+        'article.maxPages': 7,
         'cache.latestPageSeconds': 1,
         'cache.olderPageSeconds': 2,
         'cache.articleSeconds': 3,
@@ -110,6 +119,7 @@ describe('option mapping', () => {
       onDuplicateSession: ask,
     });
     expect(toServiceOptions(s)).toEqual({
+      maxArticlePages: 7,
       cacheTtlSeconds: { latestPage: 1, olderPage: 2, article: 3, favorites: 4 },
     });
   });

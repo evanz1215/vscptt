@@ -37,7 +37,7 @@ export function createExtension(
   });
 
   const opened = new OpenedBoards(context.globalState);
-  const tree = new BoardsTreeProvider(connection, opened);
+  const tree = new BoardsTreeProvider(connection, opened, () => currentSettings().searchMaxSaved);
   const articles = new ArticleContentProvider(
     () => connection.service,
     (message) => ui.showError(message)

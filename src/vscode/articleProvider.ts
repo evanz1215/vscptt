@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import type { Article, ArticleRef } from '../core/models';
+import type { Article, ArticleRef, SearchQuery } from '../core/models';
+import { toSearchInput } from '../core/search';
 import { renderArticle, renderArticleError } from './articleText';
 import { describeError } from './errorMessages';
 
@@ -9,6 +10,16 @@ export const ARTICLE_SCHEME = 'vscptt';
 export interface ArticleSource {
   getArticle(ref: ArticleRef): Promise<Article>;
   invalidate(board?: string, id?: string): void;
+}
+
+/** True for a search query that the core would accept; an address can carry anything. */
+function isSearchQuery(value: unknown): boolean {
+  try {
+    toSearchInput(value as SearchQuery);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The tab shows the path, so make it readable and keep it a single safe path segment. */
@@ -64,6 +75,7 @@ export function refFromUri(uri: vscode.Uri): ArticleRef | undefined {
     !optional('isPinned', (v) => typeof v === 'boolean') ||
     !optional('title', isString) ||
     !optional('author', isString) ||
+    !optional('search', isSearchQuery) ||
     !optional('id', isString)
   ) {
     return undefined;
@@ -75,6 +87,7 @@ export function refFromUri(uri: vscode.Uri): ArticleRef | undefined {
     isPinned: r.isPinned as boolean | undefined,
     title: r.title as string | undefined,
     author: r.author as string | undefined,
+    search: r.search as SearchQuery | undefined,
     id: r.id as string | undefined,
   };
 }

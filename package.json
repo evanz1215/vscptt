@@ -81,6 +81,18 @@
         "icon": "$(add)"
       },
       {
+        "command": "vscptt.search",
+        "title": "搜尋看板…",
+        "category": "PTT",
+        "icon": "$(search)"
+      },
+      {
+        "command": "vscptt.removeSearch",
+        "title": "移除這組搜尋",
+        "category": "PTT",
+        "icon": "$(close)"
+      },
+      {
         "command": "vscptt.loadMore",
         "title": "載入更多",
         "category": "PTT"
@@ -128,6 +140,10 @@
         {
           "command": "vscptt.refreshArticle",
           "when": "resourceScheme == vscptt"
+        },
+        {
+          "command": "vscptt.removeSearch",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -144,7 +160,7 @@
         {
           "command": "vscptt.refresh",
           "when": "view == vscptt.boards",
-          "group": "navigation@2"
+          "group": "navigation@3"
         },
         {
           "command": "vscptt.logout",
@@ -165,6 +181,11 @@
           "command": "vscptt.clearCredentials",
           "when": "view == vscptt.boards",
           "group": "2_misc@2"
+        },
+        {
+          "command": "vscptt.search",
+          "when": "view == vscptt.boards && vscptt.loggedIn",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -182,6 +203,16 @@
           "command": "vscptt.copyArticleId",
           "when": "view == vscptt.boards && viewItem =~ /^article/",
           "group": "1_copy@2"
+        },
+        {
+          "command": "vscptt.search",
+          "when": "view == vscptt.boards && viewItem == board",
+          "group": "inline"
+        },
+        {
+          "command": "vscptt.removeSearch",
+          "when": "view == vscptt.boards && viewItem == search",
+          "group": "inline"
         }
       ],
       "editor/title": [
@@ -237,6 +268,20 @@
           "minimum": 0,
           "maximum": 600,
           "description": "閒置多少秒後送一個無害的按鍵維持連線。0 表示關閉；低於 10 會當作 10。下次登入時生效。"
+        },
+        "vscptt.article.maxPages": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "一篇文章最多讀幾個畫面（每個畫面約 22 行）。超過的部分不讀，並在文章開頭註明。下次登入時生效。"
+        },
+        "vscptt.search.maxSaved": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "「搜尋結果」群組最多保留幾組搜尋，超過時移除最舊的。"
         },
         "vscptt.cache.latestPageSeconds": {
           "type": "number",

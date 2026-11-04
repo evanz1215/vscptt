@@ -98,7 +98,32 @@ describe('addresses that are not ours are refused', () => {
     ['listNumber is a string', uriWith(b64({ board: 'Dev', listNumber: '3' }))],
     ['isPinned is a string', uriWith(b64({ board: 'Dev', isPinned: 'yes' }))],
     ['title is a number', uriWith(b64({ board: 'Dev', title: 3 }))],
+    ['author is a number', uriWith(b64({ board: 'Dev', author: 3 }))],
+    ['search is a string', uriWith(b64({ board: 'Dev', search: 'x' }))],
+    [
+      'search of an unknown kind',
+      uriWith(b64({ board: 'Dev', search: { kind: 'body', text: 'x' } })),
+    ],
+    [
+      'search text with a control character',
+      uriWith(b64({ board: 'Dev', search: { kind: 'title', text: 'a\rb' } })),
+    ],
+    [
+      'push search that is not a number',
+      uriWith(b64({ board: 'Dev', search: { kind: 'push', threshold: '5' } })),
+    ],
   ];
+
+  it('keeps a valid search in the address', () => {
+    const ref: ArticleRef = {
+      board: 'Dev',
+      listNumber: 4,
+      title: 't',
+      author: 'bob',
+      search: { kind: 'author', text: 'bob' },
+    };
+    expect(refFromUri(articleUri(ref, 't'))).toMatchObject(ref);
+  });
   it.each(bad)('%s', (_name, uri) => {
     expect(refFromUri(uri)).toBeUndefined();
   });

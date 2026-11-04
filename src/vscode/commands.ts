@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import type { ArticleRef, ArticleSummary } from '../core/models';
+import type { ArticleRef, ArticleSummary, SearchQuery } from '../core/models';
+import { MAX_PUSH_THRESHOLD, MAX_TITLE_LENGTH, toSearchInput } from '../core/search';
 import { isValidBoardName } from '../core/service';
 import { ARTICLE_SCHEME, type ArticleContentProvider, articleUri } from './articleProvider';
 import type { BoardsTreeProvider, TreeNode } from './boardsTree';
@@ -46,7 +47,54 @@ function toRef(summary: ArticleSummary): ArticleRef {
         listNumber: summary.listNumber,
         title: summary.title,
         author: summary.author,
+        ...(summary.search ? { search: summary.search } : {}),
       };
+}
+
+/** Asks what to search for. Undefined when the user backs out at any step. */
+async function askQuery(): Promise<SearchQuery | undefined> {
+  const kinds = [
+    { label: '標題關鍵字', kind: 'title' as const },
+    { label: '作者', kind: 'author' as const },
+    { label: '推文數（負數＝噓文數）', kind: 'push' as const },
+  ];
+  const pick = await vscode.window.showQuickPick(
+    kinds.map((k) => k.label),
+    { placeHolder: '要搜尋什麼？' }
+  );
+  const kind = kinds.find((k) => k.label === pick)?.kind;
+  if (!kind) {
+    return undefined;
+  }
+  const check = (query: SearchQuery): string | undefined => {
+    try {
+      toSearchInput(query);
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+  if (kind === 'push') {
+    const input = await vscode.window.showInputBox({
+      title: '搜尋推文數',
+      prompt: `推文數高於多少的文章？輸入負數則搜噓文數（-${MAX_PUSH_THRESHOLD} 到 ${MAX_PUSH_THRESHOLD}）`,
+      placeHolder: '例如 30',
+      validateInput: (v) =>
+        /^-?\d{1,3}$/.test(v.trim())
+          ? check({ kind: 'push', threshold: Number(v.trim()) })
+          : '請輸入整數',
+    });
+    return input === undefined ? undefined : { kind: 'push', threshold: Number(input.trim()) };
+  }
+  const input = await vscode.window.showInputBox({
+    title: kind === 'title' ? '搜尋標題' : '搜尋作者',
+    prompt:
+      kind === 'title'
+        ? `標題包含的字（最多 ${MAX_TITLE_LENGTH} 字）`
+        : '作者的帳號（英文字母、數字、底線，最多 12 字）',
+    validateInput: (v) => check({ kind, text: v }),
+  });
+  return input === undefined ? undefined : { kind, text: kind === 'title' ? input.trim() : input };
 }
 
 /** Registers every command declared in package.json. */
@@ -154,9 +202,61 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       });
     }),
 
-    register('vscptt.loadMore', async (board?: unknown) => {
-      if (typeof board === 'string' && isValidBoardName(board)) {
-        await guarded(() => busy('正在載入較舊的文章…', () => tree.loadMore(board)));
+    register('vscptt.loadMore', async (board?: unknown, searchId?: unknown) => {
+      if (typeof board !== 'string' || !isValidBoardName(board)) {
+        return;
+      }
+      const load =
+        typeof searchId === 'number'
+          ? () => tree.loadMoreSearch(searchId)
+          : () => tree.loadMore(board);
+      await guarded(() => busy('正在載入較舊的文章…', load));
+    }),
+
+    register('vscptt.search', async (arg?: unknown) => {
+      const node = arg as Partial<TreeNode> | undefined;
+      let board =
+        node?.kind === 'board' || node?.kind === 'search'
+          ? node.board
+          : node?.kind === 'article'
+            ? node.summary?.board
+            : undefined;
+      if (typeof board !== 'string' || !isValidBoardName(board)) {
+        const input = await vscode.window.showInputBox({
+          title: '搜尋看板',
+          prompt: '要搜尋哪個看板？輸入看板名稱',
+          placeHolder: '例如 Soft_Job',
+          validateInput: (v) =>
+            isValidBoardName(v.trim())
+              ? undefined
+              : '看板名稱只能用英文字母、數字、底線、句點和連字號',
+        });
+        board = input?.trim();
+      }
+      if (!board) {
+        return;
+      }
+      const query = await askQuery();
+      if (!query || !(await ensureLoggedIn())) {
+        return;
+      }
+      const name = board;
+      await guarded(async () => {
+        const page = await busy(`正在搜尋 ${name}…`, () =>
+          connection.service.searchBoard(name, query)
+        );
+        if (page.articles.length === 0) {
+          ui.showInfo('沒有符合的文章。');
+          return;
+        }
+        tree.addSearch(page.board, query, page);
+      });
+    }),
+
+    register('vscptt.removeSearch', (node?: unknown) => {
+      const target = node as Partial<TreeNode> | undefined;
+      if (target?.kind === 'search' && typeof target.id === 'number') {
+        tree.removeSearch(target.id);
       }
     }),
 

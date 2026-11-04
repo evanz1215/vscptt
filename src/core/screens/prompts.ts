@@ -41,3 +41,10 @@ export const isLogoutConfirm = (l: Lines): boolean =>
   isMainMenu(l) && row(l, 22).includes('您確定要離開');
 export const isBoardSelectPrompt = (l: Lines): boolean =>
   row(l, 0).startsWith('【 選擇看板 】') && row(l, 1).includes('請輸入看板名稱');
+
+/** The prompt PTT draws on the last row after /, a or Z. Nothing a user wrote is ever on that row. */
+export const isSearchPrompt = (l: Lines): boolean =>
+  /^搜尋(標題|作者|推文數)/.test(row(l, 23).trimStart());
+
+/** Drawn on the last row, over a normal list, when a search matched nothing (with a "press any key" prompt). */
+export const isNoSearchResult = (l: Lines): boolean => row(l, 23).includes('找不到符合條件的文章');

@@ -23,11 +23,26 @@ export interface BoardListScreen {
   selected?: ListRow;
 }
 
-const BOARD_NAME = /看板《([^》]+)》/;
+/**
+ * The same list screen in two modes. After a search PTT shows only the matches ("系列" = series): the header says
+ * 系列《board》, the footer 系列文章, the rows are numbered 1..N within the results, and there are no pinned rows.
+ * Verified on the live server, 2026-11-04.
+ */
+export type ListMode = 'normal' | 'search';
 
-export function isBoardList(lines: Lines): boolean {
-  return BOARD_NAME.test(lines[0] ?? '') && (lines[23] ?? '').trimStart().startsWith('文章列表');
+const HEADER: Record<ListMode, RegExp> = {
+  normal: /看板《([^》]+)》/,
+  search: /系列《([^》]+)》/,
+};
+const FOOTER: Record<ListMode, string> = { normal: '文章列表', search: '系列文章' };
+
+export function isBoardList(lines: Lines, mode: ListMode = 'normal'): boolean {
+  return (
+    HEADER[mode].test(lines[0] ?? '') && (lines[23] ?? '').trimStart().startsWith(FOOTER[mode])
+  );
 }
+
+export const isSearchList = (lines: Lines): boolean => isBoardList(lines, 'search');
 
 export const sameBoard = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
@@ -70,11 +85,11 @@ function parseRow(line: string, screenRow: number): ListRow | null {
   };
 }
 
-export function parseBoardList(lines: Lines): BoardListScreen | null {
-  if (!isBoardList(lines)) {
+export function parseBoardList(lines: Lines, mode: ListMode = 'normal'): BoardListScreen | null {
+  if (!isBoardList(lines, mode)) {
     return null;
   }
-  const board = BOARD_NAME.exec(lines[0]!)![1]!;
+  const board = HEADER[mode].exec(lines[0]!)![1]!;
   const rows: ListRow[] = [];
   for (let r = 3; r <= 22; r++) {
     const line = lines[r] ?? '';
