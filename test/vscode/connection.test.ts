@@ -139,9 +139,17 @@ describe('remembered credentials', () => {
     const h = makeHarness({ bbs: { users: { alice: 'secret', bob: 'pw' } } });
     await h.store.remember('alice', 'secret');
     h.ui.credentials = [{ username: 'bob', password: 'pw' }];
-    await h.manager.login(); // typed, not "use saved"
+    await h.manager.login({ useSaved: false }); // asked on purpose
     expect(await h.store.load()).toEqual({ username: 'alice' });
     expect(h.secrets.size).toBe(0);
+  });
+
+  it('logs in with a remembered password without asking, even when started by hand', async () => {
+    const h = await remembered();
+    h.ui.credentials = []; // asking would hand back nothing: the login would be cancelled
+
+    expect(await h.manager.login()).toBe(true);
+    expect(h.manager.state).toBe('ready');
   });
 
   it('auto-login works only when enabled and a password is saved', async () => {
@@ -180,7 +188,8 @@ describe('review findings', () => {
     const h = makeHarness();
     await h.store.remember('alice', 'old-secret');
     h.ui.remember = 'cancel';
-    await h.manager.login();
+    h.ui.credentials = [{ username: 'alice', password: 'secret' }];
+    await h.manager.login({ useSaved: false });
     expect(await h.store.load()).toEqual({ username: 'alice', password: 'old-secret' });
   });
 

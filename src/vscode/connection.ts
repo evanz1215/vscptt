@@ -73,8 +73,8 @@ export class ConnectionManager implements vscode.Disposable {
   }
 
   /**
-   * Logs in. With `useSaved` the remembered password is used and nothing is asked; otherwise the user is asked.
-   * Resolves true when logged in. Failures are shown to the user, never thrown. Concurrent calls share one attempt.
+   * Logs in. A remembered password is used without asking (pass `useSaved: false` to be asked anyway); with none
+   * remembered the user is asked. Resolves true when logged in. Failures are shown to the user, never thrown. Concurrent calls share one attempt.
    */
   login(options: { useSaved?: boolean } = {}): Promise<boolean> {
     if (this.currentState === 'ready') {
@@ -145,7 +145,7 @@ export class ConnectionManager implements vscode.Disposable {
     const saved = await store.load();
 
     let credentials: { username: string; password: string } | undefined;
-    const typed = !(options.useSaved && saved?.password);
+    const typed = !((options.useSaved ?? true) && saved?.password);
     if (!typed) {
       credentials = { username: saved!.username, password: saved!.password! };
     } else {
