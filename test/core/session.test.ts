@@ -15,6 +15,7 @@ import {
   type SessionOptions,
   type SessionState,
 } from '../../src/core/session/session';
+import { Terminal } from '../../src/core/terminal/terminal';
 import { FakeBbs, type FakeBbsOptions } from '../fakes/fakeBbs';
 import { FakeTransport } from '../fakes/fakeTransport';
 
@@ -28,6 +29,17 @@ function connect(bbsOptions: FakeBbsOptions = {}, sessionOptions: SessionOptions
 }
 
 describe('login', () => {
+  it('leaves out the UTF-8 comma on a connection that is UTF-8 from the start (SSH)', async () => {
+    const { session, transport, bbs } = connect(
+      {},
+      { terminal: new Terminal({ encoding: 'utf-8' }) }
+    );
+    await session.login(creds);
+    expect(session.state).toBe('ready');
+    expect(bbs.loggedInAs).toBe('alice');
+    expect(transport.sent[0]).toBe('alice\r');
+  });
+
   it('walks splash -> password -> welcome -> main menu and ends ready', async () => {
     const { session, transport, bbs } = connect();
     const states: SessionState[] = [];

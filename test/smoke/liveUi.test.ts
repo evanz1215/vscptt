@@ -21,6 +21,9 @@ describe.skipIf(!live)('live PTT through the extension', () => {
       const pass = process.env.PTT_PASS!;
 
       mock.reset();
+      if (process.env.PTT_TRANSPORT === 'ssh') {
+        mock.config.set('vscptt.connection.transport', 'ssh');
+      }
       const state = new Map<string, unknown>();
       const context = {
         subscriptions: [] as Array<{ dispose(): unknown }>,

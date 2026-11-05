@@ -6,6 +6,7 @@ import { registerCommands } from './vscode/commands';
 import { ConnectionManager } from './vscode/connection';
 import { setErrorLogger } from './vscode/errorMessages';
 import { CredentialStore } from './vscode/credentialStore';
+import { HostKeyStore } from './vscode/hostKeys';
 import { ImageHoverProvider } from './vscode/imageHover';
 import { OpenedBoards } from './vscode/openedBoards';
 import { type VscpttSettings, readSettings } from './vscode/settings';
@@ -14,7 +15,7 @@ import { VscodeLoginUi } from './vscode/ui';
 
 /** Only tests change these. */
 export interface ExtensionOverrides {
-  connect?: () => Promise<Transport>;
+  connect?: (kind: 'websocket' | 'ssh') => Promise<Transport>;
 }
 
 /** Read fresh on every login, so a changed setting applies the next time you log in. */
@@ -30,9 +31,13 @@ export function createExtension(
 ) {
   const ui = new VscodeLoginUi();
   const store = new CredentialStore(context.secrets, context.globalState);
+  const hostKeys = new HostKeyStore(context.globalState, (fp) =>
+    ui.showInfo(`第一次以 SSH 連線，已記住 PTT 的主機金鑰：${fp}`)
+  );
   const connection = new ConnectionManager({
     ui,
     store,
+    hostKeys,
     settings: currentSettings,
     connect: overrides.connect,
   });
@@ -68,11 +73,11 @@ export function createExtension(
       { scheme: ARTICLE_SCHEME },
       new ImageHoverProvider(() => currentSettings().previewImages)
     ),
-    ...registerCommands({ connection, tree, articles, opened, store, ui })
+    ...registerCommands({ connection, tree, articles, opened, store, ui, hostKeys })
   );
 
   void connection.autoLogin().catch(() => undefined);
-  const created = { connection, tree, articles, opened, store, ui, statusBar };
+  const created = { connection, tree, articles, opened, store, ui, statusBar, hostKeys };
   active = created;
   return created;
 }

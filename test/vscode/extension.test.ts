@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import * as vscode from 'vscode';
 import { afterEach, describe, expect, it } from 'vitest';
+import { aidFromId } from '../../src/core/aid';
 import { createExtension, deactivate } from '../../src/extension';
 import type { ArticleSummary } from '../../src/core/models';
 import type { BoardsTreeProvider, TreeNode } from '../../src/vscode/boardsTree';
@@ -213,7 +214,7 @@ describe('using it, start to finish', () => {
     await t.run('vscptt.copyArticleUrl', newest);
     expect(mock.clipboard).toBe('https://www.ptt.cc/bbs/Dev/M.30.A.001.html');
     await t.run('vscptt.copyArticleId', newest);
-    expect(mock.clipboard).toMatch(/^#1/);
+    expect(mock.clipboard).toBe(aidFromId('M.30.A.001'));
 
     // and open it in the browser: the address is checked, then handed over once
     await t.run('vscptt.openArticleInBrowser', newest);
@@ -547,5 +548,191 @@ describe('searching a board', () => {
     await h.run('vscptt.removeSearch', search);
 
     expect(searchGroup(await h.tree.getChildren())).toBeUndefined();
+  });
+});
+
+describe('opening an article by its code or address', () => {
+  it('opens a pasted URL, a code with its board, and a bare code after asking for the board', async () => {
+    const t = boot();
+    await t.login();
+
+    mock.inputAnswers.push('https://www.ptt.cc/bbs/Dev/M.12.A.001.html');
+    await t.run('vscptt.openArticleByAddress');
+    expect(mock.shownTexts.at(-1)).toContain('body of 12');
+
+    mock.inputAnswers.push(`${aidFromId('M.7.A.001')} (Dev)`);
+    await t.run('vscptt.openArticleByAddress');
+    expect(mock.shownTexts.at(-1)).toContain('body of 7');
+
+    mock.inputAnswers.push(aidFromId('M.3.A.001')!, 'Dev');
+    await t.run('vscptt.openArticleByAddress');
+    expect(mock.shownTexts.at(-1)).toContain('body of 3');
+    expect(t.servers[0]!.aidSearches).toHaveLength(3);
+  });
+
+  it('says so when the board has no such article, and types nothing for input it cannot read', async () => {
+    const t = boot();
+    await t.login();
+
+    mock.inputAnswers.push('https://www.ptt.cc/bbs/Dev/M.555.A.001.html');
+    await t.run('vscptt.openArticleByAddress');
+    expect(mock.messages.some((m) => m.message.includes('找不到這篇文章'))).toBe(true);
+    expect(mock.shownTexts).toHaveLength(0);
+
+    mock.inputAnswers.push('#1abc\r');
+    await t.run('vscptt.openArticleByAddress');
+    expect(t.servers[0]!.aidSearches).toHaveLength(1);
+    expect(mock.inputBoxes.at(-1)!.validateInput!('#1abc\r')).toBeTruthy();
+  });
+});
+
+describe('the pushes of an open article', () => {
+  const thread = (): FakeArticle[] => [
+    {
+      id: 'M.1.A.001',
+      author: 'op',
+      title: '[討論] 人月神話',
+      body: ['mythical'],
+      pushes: [
+        { kind: '推', user: 'bob', text: 'first' },
+        { kind: '→', user: 'op', text: 'thanks' },
+        { kind: '噓', user: 'bob', text: 'second' },
+      ],
+    },
+    { id: 'M.2.A.002', author: 'amy', title: 'Re: [討論] 人月神話', body: ['reply'] },
+  ];
+
+  const openFirst = async () => {
+    const boards = { Dev: thread() };
+    const t = boot({ boards });
+    await t.login();
+    mock.inputAnswers.push('https://www.ptt.cc/bbs/Dev/M.1.A.001.html');
+    await t.run('vscptt.openArticleByAddress');
+    return { t, boards, uri: mock.shownUris.at(-1)!, text: mock.shownTexts.at(-1)! };
+  };
+
+  it('counts them in the header', async () => {
+    const { text } = await openFirst();
+    expect(text).toContain('推文：推 1・噓 1・→ 1（共 3 則）');
+  });
+
+  it('lists the author first, then jumps to the chosen push', async () => {
+    const { t, uri, text } = await openFirst();
+    mock.quickPickAnswers.push('bob', '噓 second');
+    await t.run('vscptt.filterPushes', uri);
+
+    expect(mock.quickPickCalls.at(-2)).toEqual(['op', 'bob']);
+    expect(mock.quickPickCalls.at(-1)).toEqual(['推 first', '噓 second']);
+    expect(mock.revealedLines).toEqual([text.split('\n').findIndex((l) => l.startsWith('噓 bob'))]);
+  });
+
+  it('tells about new pushes after a refresh and jumps to the first new one', async () => {
+    const { t, boards, uri } = await openFirst();
+    boards.Dev[0]!.pushes!.push({ kind: '推', user: 'carol', text: 'late' });
+    mock.messageAnswers.push('跳到新推文');
+
+    await t.run('vscptt.refreshArticle', uri);
+    const text = await mock.contentProviders.get('vscptt')!.provideTextDocumentContent(uri);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mock.messages.some((m) => m.message === '有 1 則新推文。')).toBe(true);
+    expect(mock.revealedLines).toEqual([
+      text.split('\n').findIndex((l) => l.startsWith('推 carol')),
+    ]);
+  });
+
+  it('stops quietly when the user backs out of either filter step', async () => {
+    const { t, uri } = await openFirst();
+    const before = mock.quickPickCalls.length; // logging in asked one already
+    mock.quickPickAnswers.push(undefined);
+    await t.run('vscptt.filterPushes', uri);
+    expect(mock.quickPickCalls).toHaveLength(before + 1);
+
+    mock.quickPickAnswers.push('bob', undefined);
+    await t.run('vscptt.filterPushes', uri);
+    expect(mock.quickPickCalls).toHaveLength(before + 3);
+    expect(mock.revealedLines).toEqual([]);
+  });
+
+  it('says there is nothing to filter for an article without pushes, or outside an article tab', async () => {
+    const { t } = await openFirst();
+    const before = mock.quickPickCalls.length;
+    mock.inputAnswers.push('https://www.ptt.cc/bbs/Dev/M.2.A.002.html');
+    await t.run('vscptt.openArticleByAddress');
+    await t.run('vscptt.filterPushes', mock.shownUris.at(-1));
+    await t.run('vscptt.filterPushes', vscode.Uri.from({ scheme: 'file', path: '/x.ptt' }));
+    await t.run('vscptt.filterPushes');
+
+    expect(mock.messages.filter((m) => m.message.endsWith('這篇文章沒有推文。'))).toHaveLength(3);
+    expect(mock.quickPickCalls).toHaveLength(before);
+  });
+
+  it('says nothing about new pushes when a refresh brings none', async () => {
+    const { t, uri } = await openFirst();
+    await t.run('vscptt.refreshArticle', uri);
+    await mock.contentProviders.get('vscptt')!.provideTextDocumentContent(uri);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mock.messages.some((m) => m.message.includes('新推文'))).toBe(false);
+  });
+
+  it('forgets an article tab once VS Code closes it', async () => {
+    const { t, boards, uri } = await openFirst();
+    for (const listener of mock.closeListeners) {
+      listener({ uri });
+    }
+    expect(t.extension.articles.shownAt(uri as unknown as vscode.Uri)).toBeUndefined();
+
+    boards.Dev[0]!.pushes!.push({ kind: '推', user: 'carol', text: 'late' });
+    await mock.contentProviders.get('vscptt')!.provideTextDocumentContent(uri);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mock.messages.some((m) => m.message.includes('新推文'))).toBe(false); // a fresh showing
+  });
+
+  it('searches the thread of an article in the tree, without the "Re:"', async () => {
+    const { t } = await openFirst();
+    const reply = await t.extension.connection.service.findArticle('Dev', 'M.2.A.002');
+    await t.run('vscptt.searchSameTitle', { kind: 'article', summary: reply });
+    expect(t.servers[0]!.searches).toEqual([['/', '[討論] 人月神話']]);
+  });
+
+  it('searches nothing when the title is only a "Re:"', async () => {
+    const { t } = await openFirst();
+    const empty: ArticleSummary = {
+      board: 'Dev',
+      listNumber: 2,
+      isPinned: false,
+      title: 'Re: ',
+      author: 'amy',
+      date: '11/01',
+      push: '',
+      mark: '',
+      kind: 'reply',
+    };
+    await t.run('vscptt.searchSameTitle', { kind: 'article', summary: empty });
+    expect(t.servers[0]!.searches).toEqual([]);
+    expect(mock.messages.some((m) => m.message.includes('沒有可以搜尋的字'))).toBe(true);
+  });
+});
+
+describe('the remembered SSH host key', () => {
+  it('forgets it only after a confirmation, and says so when there is none', async () => {
+    const t = boot();
+    await t.run('vscptt.forgetHostKey');
+    expect(mock.messages.at(-1)!.message).toContain('還沒有記住');
+
+    await t.extension.hostKeys.check('SHA256:abc');
+    mock.messageAnswers.push(undefined); // dismissed
+    await t.run('vscptt.forgetHostKey');
+    expect(t.extension.hostKeys.known).toBe('SHA256:abc');
+
+    mock.messageAnswers.push('忘記');
+    await t.run('vscptt.forgetHostKey');
+    expect(t.extension.hostKeys.known).toBeUndefined();
+  });
+
+  it('tells the user the first time a key is trusted', async () => {
+    const t = boot();
+    await t.extension.hostKeys.check('SHA256:abc');
+    expect(mock.messages.at(-1)!.message).toContain('已記住 PTT 的主機金鑰：SHA256:abc');
   });
 });

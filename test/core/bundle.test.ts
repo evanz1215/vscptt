@@ -8,6 +8,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // The extension ships as an esbuild CJS bundle, which resolves CommonJS dependencies differently from
 // vitest. This test bundles the core modules the same way and loads the result, so interop mistakes
 // (for example a default import that is undefined only in the bundle) fail here instead of at runtime.
+// Same as esbuild.mjs: ssh2's optional native parts stay out of the bundle.
+const NATIVE = ['vscode', 'cpu-features', '*.node'];
+
 describe('esbuild bundle of the core modules', () => {
   let dir: string;
   let load: (name: string) => Record<string, unknown>;
@@ -18,11 +21,12 @@ describe('esbuild bundle of the core modules', () => {
       entryPoints: {
         terminal: 'src/core/terminal/terminal.ts',
         wsTransport: 'src/core/transport/wsTransport.ts',
+        sshTransport: 'src/core/transport/sshTransport.ts',
       },
       bundle: true,
       platform: 'node',
       format: 'cjs',
-      external: ['vscode'],
+      external: NATIVE,
       outdir: dir,
       logLevel: 'silent',
     });
@@ -50,6 +54,37 @@ describe('esbuild bundle of the core modules', () => {
     expect(mod.PTT_WS_ORIGIN).toBe('https://term.ptt.cc');
   });
 
+  it('connects over SSH from inside the bundle, with only the pure-JS parts of ssh2', async () => {
+    const { connectSsh } = load('sshTransport') as {
+      connectSsh: typeof import('../../src/core/transport/sshTransport').connectSsh;
+    };
+    const { Server, utils } = await import('ssh2');
+    const server = new Server(
+      { hostKeys: [utils.generateKeyPairSync('ed25519').private] },
+      (client) => {
+        client.on('authentication', (ctx) => ctx.accept());
+        client.on('ready', () =>
+          client.on('session', (accept) => {
+            const session = accept();
+            session.on('pty', (ok) => ok?.());
+            session.on('shell', (ok) => ok().write('hello from ssh'));
+          })
+        );
+        client.on('error', () => {});
+      }
+    );
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const port = (server.address() as import('node:net').AddressInfo).port;
+      const t = await connectSsh({ host: '127.0.0.1', port, verifyHostKey: () => true });
+      const text = await new Promise<string>((r) => t.onData((d) => r(Buffer.from(d).toString())));
+      expect(text).toBe('hello from ssh');
+      t.close();
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+
   it('runs login, a board page and an article end to end inside the bundle', async () => {
     // Bundle the real session and service together with the fake server, then drive them from here.
     buildSync({
@@ -65,7 +100,7 @@ describe('esbuild bundle of the core modules', () => {
       bundle: true,
       platform: 'node',
       format: 'cjs',
-      external: ['vscode'],
+      external: NATIVE,
       outfile: join(dir, 'e2e.js'),
       logLevel: 'silent',
     });
@@ -108,6 +143,7 @@ describe('esbuild bundle of the core modules', () => {
       platform: 'node',
       format: 'cjs',
       alias: { vscode: join(process.cwd(), 'test/mocks/vscode.ts') },
+      external: NATIVE.filter((x) => x !== 'vscode'),
       outfile: join(dir, 'ext.js'),
       logLevel: 'silent',
     });

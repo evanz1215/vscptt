@@ -71,6 +71,8 @@ export interface Harness {
   /** Every fake server and transport the manager connected to, in order. */
   bbs: FakeBbs[];
   transports: FakeTransport[];
+  /** The transport kind of each connection, in order. */
+  kinds: string[];
   settings: VscpttSettings;
 }
 
@@ -87,6 +89,7 @@ export function makeHarness(
   const { store, secrets, state } = memoryStore();
   const bbsList: FakeBbs[] = [];
   const transports: FakeTransport[] = [];
+  const kinds: string[] = [];
   const settings: VscpttSettings = {
     ...DEFAULT_SETTINGS,
     keepAliveSeconds: 0,
@@ -94,7 +97,8 @@ export function makeHarness(
   };
 
   const manager = new ConnectionManager({
-    connect: async () => {
+    connect: async (kind) => {
+      kinds.push(kind);
       const bbs = new FakeBbs(options.bbs);
       const transport = bbs.connect();
       bbsList.push(bbs);
@@ -106,5 +110,5 @@ export function makeHarness(
     settings: () => settings,
     shutdownTimeoutMs: options.shutdownTimeoutMs,
   });
-  return { manager, ui, store, secrets, state, bbs: bbsList, transports, settings };
+  return { manager, ui, store, secrets, state, bbs: bbsList, transports, kinds, settings };
 }

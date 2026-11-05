@@ -32,6 +32,7 @@ describe('renderArticle', () => {
         '看板：Dev',
         '時間：Sun Nov  1 10:17:18 2026',
         '網址：https://www.ptt.cc/bbs/Dev/M.1.A.001.html',
+        '推文：推 1・噓 0・→ 1（共 2 則）',
         RULE,
         'first line',
         'second line',
@@ -46,6 +47,7 @@ describe('renderArticle', () => {
   it('leaves out the push section when there are no pushes', () => {
     const text = renderArticle(article({ pushes: [] }));
     expect(text.split(RULE)).toHaveLength(2); // exactly one rule
+    expect(text).not.toContain('推文：');
   });
 
   it('says so when the content could not be checked against the list entry', () => {

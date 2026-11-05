@@ -1,3 +1,4 @@
+import { aidFromId } from '../../src/core/aid';
 import { FakeTransport } from './fakeTransport';
 
 /**
@@ -41,6 +42,10 @@ export interface FakeBbsOptions {
   tryLater?: boolean;
   /** Typed name -> board actually entered (PTT completes names loosely). */
   autocomplete?: Record<string, string>;
+  /** `#` and a code leave the cursor where it was, with no notice (the case the `Q` check exists for). */
+  aidJumpIgnored?: boolean;
+  /** Send each screen in pieces a little apart, as SSH does (seen live 2026-11-05). */
+  splitFrames?: boolean;
 }
 
 type Mode =
@@ -56,6 +61,8 @@ type Mode =
   | 'boardWelcome'
   | 'list'
   | 'searchPrompt'
+  | 'aidPrompt'
+  | 'aidNotFound'
   | 'noResult'
   | 'popup'
   | 'article'
@@ -129,6 +136,10 @@ function tokenize(data: string): string[] {
   return keys;
 }
 
+/** The real code for ordinary ids; a made-up one for the odd ids some tests use. */
+const aidOf = (a: FakeArticle): string =>
+  aidFromId(a.id) ?? `#1${Buffer.from(a.id).toString('hex').slice(0, 7)}`;
+
 export class FakeBbs {
   readonly options: Required<FakeBbsOptions>;
   /** What the server saw in answer to the duplicate-login / attempts prompts. */
@@ -178,6 +189,8 @@ export class FakeBbs {
       frequentNotice: options.frequentNotice ?? false,
       tryLater: options.tryLater ?? false,
       autocomplete: options.autocomplete ?? {},
+      aidJumpIgnored: options.aidJumpIgnored ?? false,
+      splitFrames: options.splitFrames ?? false,
     };
     for (const articles of Object.values(this.options.boards)) {
       FakeBbs.renumber(articles);
@@ -233,9 +246,11 @@ export class FakeBbs {
       case 'deleteAttempts':
       case 'select':
       case 'searchPrompt':
+      case 'aidPrompt':
       case 'logoutConfirm':
         return this.onLine(key);
       case 'noResult':
+      case 'aidNotFound':
         this.mode = 'list';
         return this.render();
       case 'notice':
@@ -290,7 +305,14 @@ export class FakeBbs {
   /** Prompts show what is typed, so merely typing changes the screen. */
   private echo(): void {
     if (
-      ['select', 'duplicate', 'deleteAttempts', 'logoutConfirm', 'searchPrompt'].includes(this.mode)
+      [
+        'select',
+        'duplicate',
+        'deleteAttempts',
+        'logoutConfirm',
+        'searchPrompt',
+        'aidPrompt',
+      ].includes(this.mode)
     ) {
       this.render();
     }
@@ -350,6 +372,8 @@ export class FakeBbs {
         return this.submitBoardName(line);
       case 'searchPrompt':
         return this.submitSearch(line);
+      case 'aidPrompt':
+        return this.submitAid(line);
       case 'logoutConfirm':
         this.mode = line.toLowerCase() === 'y' ? 'goodbye' : 'main';
         return this.render();
@@ -536,6 +560,9 @@ export class FakeBbs {
         this.cursor = this.items.length - 1;
         this.top = Math.max(this.items.length - WINDOW, 0);
         return this.render();
+      case '#':
+        this.mode = 'aidPrompt';
+        return this.render();
       case 'Q':
         this.mode = 'popup';
         return this.render();
@@ -578,6 +605,31 @@ export class FakeBbs {
     this.items = matches;
     this.cursor = matches.length - 1;
     this.top = Math.max(matches.length - WINDOW, 0);
+    this.render();
+  }
+
+  /** Every article code the client typed after `#`. */
+  readonly aidSearches: string[] = [];
+
+  private submitAid(text: string): void {
+    this.buffer = '';
+    this.mode = 'list';
+    if (text === '') {
+      return this.render();
+    }
+    this.aidSearches.push(text);
+    if (this.options.aidJumpIgnored) {
+      return this.render();
+    }
+    const idx = this.items.findIndex((a) => aidOf(a) === `#${text}`);
+    if (idx < 0) {
+      this.mode = 'aidNotFound';
+      return this.render();
+    }
+    this.cursor = idx;
+    if (idx < this.top || idx >= this.top + WINDOW) {
+      this.top = Math.max(idx - 10, 0);
+    }
     this.render();
   }
 
@@ -657,8 +709,27 @@ export class FakeBbs {
 
   // ---- rendering ----
 
+  /** Keeps split screens in order: a piece never overtakes the rest of the screen before it. */
+  private sending = Promise.resolve();
+
   private screen(rows: string[]): void {
-    this.transport.push(frame(rows));
+    if (!this.options.splitFrames) {
+      return this.transport.push(frame(rows));
+    }
+    // Like PTT over SSH: rows are rewritten in place (no clear), so the rows not reached yet still show the
+    // previous screen, and the list's header and footer are there the whole time.
+    const data =
+      '\x1b[H' + Array.from({ length: 24 }, (_, i) => `${fit(rows[i] ?? '')}\x1b[K`).join('\r\n');
+    // Four pieces, so a list's cursor row can arrive before the rows under it.
+    const size = Math.ceil(data.length / 4);
+    this.sending = this.sending.then(async () => {
+      for (let i = 0; i < data.length; i += size) {
+        if (i > 0) {
+          await new Promise((r) => setTimeout(r, 15)); // well under the client's quiet time
+        }
+        this.transport.push(data.slice(i, i + size));
+      }
+    });
   }
 
   private render(): void {
@@ -701,6 +772,17 @@ export class FakeBbs {
         rows[23] = `${label} ${this.buffer}`;
         return this.screen(rows);
       }
+      case 'aidPrompt': {
+        const rows = this.listRows();
+        rows[23] = `搜尋文章代碼(AID): #${this.buffer}`;
+        return this.screen(rows);
+      }
+      case 'aidNotFound': {
+        const rows = this.listRows();
+        rows[23] =
+          ' ◆  找不到這個文章代碼(AID)，可能是文章已消失，或是你找錯看板了  [按任意鍵繼續]';
+        return this.screen(rows);
+      }
       case 'noResult': {
         const rows = this.listRows();
         rows[23] = ' ◆  找不到符合條件的文章。                                      [按任意鍵繼續]';
@@ -709,7 +791,7 @@ export class FakeBbs {
       case 'popup': {
         const rows = this.listRows();
         const a = this.items[this.cursor]!;
-        const aid = `#1${Buffer.from(a.id).toString('hex').slice(0, 7)}`;
+        const aid = aidOf(a);
         rows[10] = '┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐';
         rows[11] = `│  文章代碼(AID): ${aid} (${this.currentBoard}) [ptt.cc] ${a.title} │`;
         rows[12] = `│  文章網址: https://www.ptt.cc/bbs/${this.currentBoard}/${a.id}.html  │`;

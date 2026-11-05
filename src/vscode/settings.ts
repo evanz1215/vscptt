@@ -1,7 +1,11 @@
 import type { PttServiceOptions } from '../core/service';
 import type { DuplicateSessionPolicy, SessionOptions } from '../core/session/session';
 
+export type TransportKind = 'websocket' | 'ssh';
+
 export interface VscpttSettings {
+  /** How to reach PTT: its WebSocket gateway, or SSH to ptt.cc. */
+  transport: TransportKind;
   duplicateSession: DuplicateSessionPolicy;
   autoLogin: boolean;
   settleMs: number;
@@ -25,6 +29,7 @@ export interface VscpttSettings {
 export const SETTING_KEYS = [
   'login.duplicateSession',
   'login.autoLogin',
+  'connection.transport',
   'connection.settleMs',
   'connection.stepTimeoutMs',
   'connection.keepAliveSeconds',
@@ -38,6 +43,7 @@ export const SETTING_KEYS = [
 ] as const;
 
 export const DEFAULT_SETTINGS: VscpttSettings = {
+  transport: 'websocket',
   duplicateSession: 'ask',
   autoLogin: false,
   settleMs: 80,
@@ -69,6 +75,7 @@ export function readSettings(get: (key: (typeof SETTING_KEYS)[number]) => unknow
   const policy = get('login.duplicateSession');
   const keepAlive = number(get('connection.keepAliveSeconds'), d.keepAliveSeconds, 0, 600);
   return {
+    transport: get('connection.transport') === 'ssh' ? 'ssh' : 'websocket',
     duplicateSession: POLICIES.includes(policy as DuplicateSessionPolicy)
       ? (policy as DuplicateSessionPolicy)
       : d.duplicateSession,

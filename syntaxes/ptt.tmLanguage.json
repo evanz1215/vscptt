@@ -13,7 +13,7 @@
   ],
   "repository": {
     "header": {
-      "match": "^(標題|作者|看板|時間|網址)(：)(.*)$",
+      "match": "^(標題|作者|看板|時間|網址|推文)(：)(.*)$",
       "captures": {
         "1": { "name": "keyword.other.header.ptt" },
         "2": { "name": "punctuation.separator.ptt" },

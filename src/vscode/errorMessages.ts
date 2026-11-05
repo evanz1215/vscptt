@@ -1,5 +1,6 @@
 import { PttError } from '../core/errors';
 import { WaitTimeoutError } from '../core/queue/waitFor';
+import { SshConnectError } from '../core/transport/sshTransport';
 import { WsConnectError } from '../core/transport/wsTransport';
 
 let logger: ((text: string) => void) | undefined;
@@ -25,6 +26,11 @@ export function describeError(error: unknown): string {
     const status = error.statusCode ? `（HTTP ${error.statusCode}）` : '';
     return `無法連線到 PTT${status}，請檢查網路後再試。`;
   }
+  if (error instanceof SshConnectError) {
+    return error.hostKeyFingerprint
+      ? `PTT 的 SSH 主機金鑰（${error.hostKeyFingerprint}）和上次記住的不同，已拒絕連線。可能是站方更換了金鑰，也可能有人在攔截連線；確認是站方更換後，執行「PTT: 忘記 SSH 主機金鑰」再連線。`
+      : '無法以 SSH 連線到 PTT，請檢查網路（有些網路會擋 22 埠）後再試，或在設定改用 WebSocket。';
+  }
   if (error instanceof PttError) {
     switch (error.code) {
       case 'loginFailed':
@@ -41,6 +47,8 @@ export function describeError(error: unknown): string {
         return `找不到看板「${(error as { board?: string }).board ?? ''}」，或沒有權限進入。`;
       case 'articleDeleted':
         return '這篇文章已被刪除，沒有內容可以顯示。';
+      case 'articleNotFound':
+        return '這個看板裡找不到這篇文章，可能已被刪除、移走，或看板名稱不對。';
       case 'articleMismatch':
         return '看板清單已經變動，無法確認打開的是同一篇文章。請重新整理看板後再試。';
       case 'unexpectedScreen':

@@ -1,7 +1,9 @@
+import { aidFromId } from './aid';
 import { TtlCache } from './cache/ttlCache';
 import {
   ArticleDeletedError,
   ArticleMismatchError,
+  ArticleNotFoundError,
   BoardNotFoundError,
   ConnectionClosedError,
   InvalidArgumentError,
@@ -38,6 +40,7 @@ import {
   selectedNumber,
 } from './screens/favorites';
 import {
+  isAidPrompt,
   isAnyKeyPrompt,
   isBoardSelectPrompt,
   isLogoutConfirm,
@@ -205,6 +208,56 @@ export class PttService {
         const popup = await this.readPopup(ref.board, listMode(ref));
         checkId(ref, popup.id);
         return { board: popup.board, id: popup.id, aid: popup.aid, url: popup.url };
+      })
+    );
+  }
+
+  /**
+   * Finds an article of `board` by its id (`#` and its code) and returns it as a list entry for getArticle.
+   * The `Q` box confirms the cursor really landed on it. Not yet seen on the live server: the prompt and the
+   * not-found notice follow mbbsd's source.
+   */
+  async findArticle(board: string, id: ArticleId): Promise<ArticleSummary> {
+    assertBoardName(board);
+    const aid = aidFromId(id);
+    if (!aid) {
+      throw new InvalidArgumentError(`Not an article id: ${JSON.stringify(id)}`);
+    }
+    this.session.assertReady();
+    return this.session.run(() =>
+      this.guard(async () => {
+        const s = this.session;
+        await this.boardList(board, true);
+        s.send('#');
+        await s.waitFor(isAidPrompt, 'the article code prompt');
+        s.send(aid.slice(1), Keys.ENTER); // the prompt already shows the '#'
+        const outcome = await s.waitFor(
+          (l) =>
+            isAidPrompt(l) ? false : isAnyKeyPrompt(l) ? 'none' : isBoardList(l) ? 'list' : false,
+          'the list after the article code'
+        );
+        if (outcome === 'none') {
+          await s.sendAndWaitChange(Keys.SPACE, 'the list after the notice');
+          await s.waitFor((l) => isBoardList(l), 'the list after the notice');
+          throw new ArticleNotFoundError();
+        }
+        await s.flush();
+        const list = parseBoardList(s.lines);
+        const row = list?.selected;
+        if (!list || !row) {
+          throw new UnexpectedScreenError('No entry is selected after the code jump', s.snapshot());
+        }
+        if (isDeletedRow(row)) {
+          throw new ArticleDeletedError();
+        }
+        if ((await this.readPopup(board)).id !== id) {
+          throw new ArticleNotFoundError(); // the cursor stayed where it was
+        }
+        // shortcut: counts pinned rows on this screen only; getArticle's id check catches a wrong guess.
+        const pinnedIndex = row.isPinned
+          ? list.rows.filter((r) => r.isPinned).findIndex((r) => r.screenRow === row.screenRow)
+          : undefined;
+        return toSummary(list.board, row, pinnedIndex);
       })
     );
   }
@@ -444,6 +497,7 @@ export class PttService {
         if (screen === 'anyKey') {
           await s.sendAndWaitChange(Keys.SPACE, 'the board list');
         } else {
+          await s.settle(); // the first sight of the list can be half drawn (SSH sends a screen in pieces)
           list = parseBoardList(s.lines);
         }
       }
@@ -486,6 +540,7 @@ export class PttService {
       await s.waitFor((l) => isBoardList(l), 'the list after the notice');
       return null;
     }
+    await s.settle();
     const screen = parseBoardList(s.lines, 'search');
     if (!screen || !sameBoard(screen.board, board)) {
       throw new ArticleMismatchError('The search results belong to another board');
@@ -530,10 +585,21 @@ export class PttService {
     const description = `list row ${n} to be selected`;
     const limit = s.settings.stepTimeoutMs;
     const quick = Math.min(600, limit);
+    // The cursor row can be drawn before the rows below it (SSH sends a redraw in pieces): let the screen finish,
+    // then read the whole list again. Found live on 2026-11-05; WebSocket sends whole screens.
+    const complete = async (): Promise<BoardListScreen> => {
+      await s.settle();
+      const screen = matches(s.lines);
+      if (!screen) {
+        throw new UnexpectedScreenError(`List row ${n} was selected, then was not`, s.snapshot());
+      }
+      return screen;
+    };
 
     s.send(String(n), Keys.ENTER);
     try {
-      return await s.waitFor(matches, description, quick);
+      await s.waitFor(matches, description, quick);
+      return await complete();
     } catch (error) {
       if (!(error instanceof WaitTimeoutError)) {
         throw error;
@@ -543,7 +609,7 @@ export class PttService {
     // row when the number is past the end, which can leave the screen unchanged). Ask the server to catch up;
     // once it has, where the cursor is is the answer. If it will not say, keep waiting as before.
     if (await s.flush()) {
-      const now = matches(s.lines);
+      const now = matches(s.lines); // flush() has already let the screen settle
       if (now) {
         return now;
       }
@@ -551,7 +617,8 @@ export class PttService {
         throw new ArticleMismatchError(`The list has no row ${n} any more`);
       }
     }
-    return s.waitFor(matches, description, Math.max(limit - quick, 1000));
+    await s.waitFor(matches, description, Math.max(limit - quick, 1000));
+    return complete();
   }
 
   private async loadPage(

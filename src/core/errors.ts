@@ -6,6 +6,7 @@ export type PttErrorCode =
   | 'unexpectedScreen'
   | 'articleMismatch'
   | 'articleDeleted'
+  | 'articleNotFound'
   | 'boardNotFound'
   | 'notLoggedIn'
   | 'invalidArgument';
@@ -95,6 +96,13 @@ export class ArticleMismatchError extends PttError {
 export class ArticleDeletedError extends PttError {
   constructor() {
     super('The article was deleted', 'articleDeleted');
+  }
+}
+
+/** No article with that code in the board (moved, deleted, or the wrong board). */
+export class ArticleNotFoundError extends PttError {
+  constructor() {
+    super('No article with that code in this board', 'articleNotFound');
   }
 }
 

@@ -43,10 +43,12 @@ const MAX_STEPS = 10;
 export async function runLogin(session: Session, credentials: Credentials): Promise<void> {
   await session.waitFor(isLoginPrompt, 'login prompt', 10_000);
 
-  // A username ending in a comma switches the session from Big5 to UTF-8. Switch the decoder first so the
-  // reply, however fast, is decoded correctly.
+  // The WebSocket gateway starts in Big5, and a username ending in a comma switches it to UTF-8. SSH (bbsu) is
+  // UTF-8 from the start and is logged in without the comma (docs/plan.md 2.1.1). Switch the decoder first so
+  // the reply, however fast, is decoded correctly.
+  const suffix = session.terminal.encoding === 'big5' ? ',' : '';
   session.terminal.setEncoding('utf-8');
-  session.send(`${credentials.username},`, Keys.ENTER);
+  session.send(`${credentials.username}${suffix}`, Keys.ENTER);
 
   const afterUsername = await session.waitFor(
     (l) => (isPasswordPrompt(l) ? 'password' : isNoSuchAccount(l) ? 'noAccount' : false),

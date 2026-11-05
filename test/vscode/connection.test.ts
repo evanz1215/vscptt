@@ -1,3 +1,4 @@
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { NotLoggedInError } from '../../src/core/errors';
 import type { ConnectionState } from '../../src/vscode/connection';
@@ -348,5 +349,50 @@ describe('FakeUi', () => {
     const ui = new FakeUi();
     expect(ui.kickOther).toBe(false);
     expect(ui.remember).toBe('no');
+  });
+});
+
+describe('choosing the transport', () => {
+  it('connects the way the settings say, read at each login, with the login that way needs', async () => {
+    const h = makeHarness();
+    await h.manager.login();
+    await h.manager.logout();
+    h.settings.transport = 'ssh';
+    await h.manager.login();
+    expect(h.kinds).toEqual(['websocket', 'ssh']);
+    expect(h.transports[0]!.sent[0]).toBe('alice,\r'); // WebSocket: comma switches to UTF-8
+    expect(h.transports[1]!.sent[0]).toBe('alice\r'); // SSH: UTF-8 already
+  });
+
+  it.each([
+    ['nothing can vouch for the host key', undefined],
+    ['the remembered host key differs', { check: async () => false }],
+  ])('refuses SSH, before logging in, when %s', async (_name, hostKeys) => {
+    const { ConnectionManager } = await import('../../src/vscode/connection');
+    const { DEFAULT_SETTINGS } = await import('../../src/vscode/settings');
+    const { memoryStore } = await import('./helpers');
+    const { Server, utils } = await import('ssh2');
+    let authenticated = false;
+    const server = new Server({ hostKeys: [utils.generateKeyPairSync('ed25519').private] }, (c) => {
+      c.on('authentication', (ctx) => ((authenticated = true), ctx.accept()));
+      c.on('error', () => {});
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const ui = new FakeUi();
+      const manager = new ConnectionManager({
+        ui,
+        store: memoryStore().store,
+        settings: () => ({ ...DEFAULT_SETTINGS, transport: 'ssh', keepAliveSeconds: 0 }),
+        hostKeys,
+        sshTarget: { host: '127.0.0.1', port: (server.address() as AddressInfo).port },
+      });
+      expect(await manager.login()).toBe(false);
+      expect(manager.state).toBe('disconnected');
+      expect(authenticated).toBe(false);
+      expect(ui.errors.at(-1)).toContain('主機金鑰');
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
   });
 });
