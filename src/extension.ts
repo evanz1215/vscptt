@@ -6,6 +6,7 @@ import { registerCommands } from './vscode/commands';
 import { ConnectionManager } from './vscode/connection';
 import { setErrorLogger } from './vscode/errorMessages';
 import { CredentialStore } from './vscode/credentialStore';
+import { ImageHoverProvider } from './vscode/imageHover';
 import { OpenedBoards } from './vscode/openedBoards';
 import { type VscpttSettings, readSettings } from './vscode/settings';
 import { StatusBarController } from './vscode/statusBar';
@@ -63,6 +64,10 @@ export function createExtension(
       showCollapseAll: true,
     }),
     vscode.workspace.registerTextDocumentContentProvider(ARTICLE_SCHEME, articles),
+    vscode.languages.registerHoverProvider(
+      { scheme: ARTICLE_SCHEME },
+      new ImageHoverProvider(() => currentSettings().previewImages)
+    ),
     ...registerCommands({ connection, tree, articles, opened, store, ui })
   );
 

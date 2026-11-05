@@ -14,16 +14,17 @@
 
 ### 設定（修改後下次登入生效）
 
-| 設定                                                                                          | 預設            | 說明                         |
-| --------------------------------------------------------------------------------------------- | --------------- | ---------------------------- |
-| `vscptt.login.duplicateSession`                                                               | `ask`           | 重複登入時詢問或固定處理     |
-| `vscptt.login.autoLogin`                                                                      | `false`         | 啟動時用已記住的帳密自動登入 |
-| `vscptt.connection.settleMs`                                                                  | 見 package.json | 畫面穩定等待毫秒             |
-| `vscptt.connection.stepTimeoutMs`                                                             | 見 package.json | 單一步驟逾時                 |
-| `vscptt.connection.keepAliveSeconds`                                                          | 見 package.json | 保持連線間隔（0 關閉）       |
-| `vscptt.article.maxPages`                                                                     | 30              | 一篇文章最多讀幾個畫面       |
-| `vscptt.search.maxSaved`                                                                      | 10              | 「搜尋結果」最多保留幾組搜尋 |
-| `vscptt.cache.latestPageSeconds` / `olderPageSeconds` / `articleSeconds` / `favoritesSeconds` | 見 package.json | 各類快取秒數                 |
+| 設定                                                                                          | 預設            | 說明                                                                                              |
+| --------------------------------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------- |
+| `vscptt.login.duplicateSession`                                                               | `ask`           | 重複登入時詢問或固定處理                                                                          |
+| `vscptt.login.autoLogin`                                                                      | `false`         | 啟動時用已記住的帳密自動登入                                                                      |
+| `vscptt.connection.settleMs`                                                                  | 見 package.json | 畫面穩定等待毫秒                                                                                  |
+| `vscptt.connection.stepTimeoutMs`                                                             | 見 package.json | 單一步驟逾時                                                                                      |
+| `vscptt.connection.keepAliveSeconds`                                                          | 見 package.json | 保持連線間隔（0 關閉）                                                                            |
+| `vscptt.article.maxPages`                                                                     | 30              | 一篇文章最多讀幾個畫面                                                                            |
+| `vscptt.search.maxSaved`                                                                      | 10              | 「搜尋結果」最多保留幾組搜尋                                                                      |
+| `vscptt.preview.images`                                                                       | true            | 滑鼠停在文章裡的圖片連結上時顯示預覽（圖片由 VS Code 直接向圖片網站下載，對方會看到你的網路位址） |
+| `vscptt.cache.latestPageSeconds` / `olderPageSeconds` / `articleSeconds` / `favoritesSeconds` | 見 package.json | 各類快取秒數                                                                                      |
 
 ## 開發
 

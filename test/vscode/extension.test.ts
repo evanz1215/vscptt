@@ -105,6 +105,11 @@ describe('what package.json declares matches what the code does', () => {
     expect([...mock.commands.keys()].sort()).toEqual(declared);
   });
 
+  it('registers the image hover for article documents only', () => {
+    boot();
+    expect(mock.hoverProviders.map((h) => h.scheme)).toEqual(['vscptt']);
+  });
+
   it('only puts declared commands in menus', () => {
     const declared = new Set(
       manifest.contributes.commands.map((c: { command: string }) => c.command)

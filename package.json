@@ -283,6 +283,11 @@
           "maximum": 30,
           "description": "「搜尋結果」群組最多保留幾組搜尋，超過時移除最舊的。"
         },
+        "vscptt.preview.images": {
+          "type": "boolean",
+          "default": true,
+          "description": "滑鼠停在文章裡的圖片連結（直接的圖檔、Imgur、Gyazo）上時顯示預覽。圖片由 VS Code 直接向圖片網站下載，對方網站會看到你的網路位址；不想要時關閉。"
+        },
         "vscptt.cache.latestPageSeconds": {
           "type": "number",
           "default": 60,

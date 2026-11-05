@@ -76,6 +76,29 @@ export class MarkdownString {
   }
 }
 
+export class Position {
+  constructor(
+    readonly line: number,
+    readonly character: number
+  ) {}
+}
+
+export class Range {
+  constructor(
+    readonly startLine: number,
+    readonly startCharacter: number,
+    readonly endLine: number,
+    readonly endCharacter: number
+  ) {}
+}
+
+export class Hover {
+  constructor(
+    readonly contents: MarkdownString,
+    readonly range?: Range
+  ) {}
+}
+
 export enum TreeItemCollapsibleState {
   None = 0,
   Collapsed = 1,
@@ -130,6 +153,7 @@ interface MockState {
   contexts: Map<string, unknown>;
   config: Map<string, unknown>;
   contentProviders: Map<string, TextDocumentContentProvider>;
+  hoverProviders: Array<{ scheme: string; provider: unknown }>;
   shownDocuments: string[];
   shownTexts: string[];
   openedDocuments: string[];
@@ -175,6 +199,7 @@ const fresh = (): MockState => ({
   contexts: new Map(),
   config: new Map(),
   contentProviders: new Map(),
+  hoverProviders: [],
   shownDocuments: [],
   shownTexts: [],
   openedDocuments: [],
@@ -297,6 +322,13 @@ export const workspace = {
   ): Disposable {
     mock.configListeners.add(listener);
     return new Disposable(() => mock.configListeners.delete(listener));
+  },
+};
+
+export const languages = {
+  registerHoverProvider(selector: { scheme: string }, provider: unknown): Disposable {
+    mock.hoverProviders.push({ scheme: selector.scheme, provider });
+    return new Disposable(() => undefined);
   },
 };
 

@@ -11,6 +11,8 @@ export interface VscpttSettings {
   articleMaxPages: number;
   /** How many searches the "搜尋結果" group keeps. */
   searchMaxSaved: number;
+  /** Show a picture when hovering an image link in an article. */
+  previewImages: boolean;
   cache: {
     latestPageSeconds: number;
     olderPageSeconds: number;
@@ -28,6 +30,7 @@ export const SETTING_KEYS = [
   'connection.keepAliveSeconds',
   'article.maxPages',
   'search.maxSaved',
+  'preview.images',
   'cache.latestPageSeconds',
   'cache.olderPageSeconds',
   'cache.articleSeconds',
@@ -42,6 +45,7 @@ export const DEFAULT_SETTINGS: VscpttSettings = {
   keepAliveSeconds: 30,
   articleMaxPages: 30,
   searchMaxSaved: 10,
+  previewImages: true,
   cache: {
     latestPageSeconds: 60,
     olderPageSeconds: 600,
@@ -75,6 +79,7 @@ export function readSettings(get: (key: (typeof SETTING_KEYS)[number]) => unknow
     keepAliveSeconds: keepAlive === 0 ? 0 : Math.max(keepAlive, 10),
     articleMaxPages: Math.round(number(get('article.maxPages'), d.articleMaxPages, 1, 100)),
     searchMaxSaved: Math.round(number(get('search.maxSaved'), d.searchMaxSaved, 1, 30)),
+    previewImages: get('preview.images') !== false,
     cache: {
       latestPageSeconds: number(
         get('cache.latestPageSeconds'),

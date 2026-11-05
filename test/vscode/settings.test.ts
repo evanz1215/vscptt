@@ -24,6 +24,7 @@ describe('readSettings', () => {
         'connection.keepAliveSeconds': 45,
         'article.maxPages': 12,
         'search.maxSaved': 5,
+        'preview.images': false,
         'cache.latestPageSeconds': 10,
         'cache.olderPageSeconds': 20,
         'cache.articleSeconds': 30,
@@ -38,6 +39,7 @@ describe('readSettings', () => {
       keepAliveSeconds: 45,
       articleMaxPages: 12,
       searchMaxSaved: 5,
+      previewImages: false,
       cache: {
         latestPageSeconds: 10,
         olderPageSeconds: 20,
