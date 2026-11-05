@@ -109,6 +109,43 @@ describe('favorites', () => {
   });
 });
 
+describe('favorites folders and separators', () => {
+  const page = (rows: string[]) => {
+    const lines = Array<string>(24).fill('');
+    lines[0] = '【看板列表】   批踢踢實業坊';
+    lines[23] = ' 我的最愛  (a)增加看板';
+    rows.forEach((row, i) => (lines[3 + i] = row));
+    return lines;
+  };
+  // The shapes pttbbs draws in mbbsd/board.c.
+  const rows = parseFavorites(
+    page([
+      '>     1 ˇ Gossiping     綜合 ◎ [PTT] 八卦板',
+      '      2   MyFavFolder  目錄 ◎我的資料夾',
+      `      3   ${'-'.repeat(12)}      ${'-'.repeat(42)}`,
+      `      4 D ${'-'.repeat(12)}      ${'-'.repeat(42)}`,
+      '      5   C_Chat        閒談 ◎ [希洽] 希洽板',
+    ])
+  );
+
+  it('tells boards, folders and separators apart and keeps their numbers', () => {
+    expect(rows.map((r) => [r.number, r.kind])).toEqual([
+      [1, 'board'],
+      [2, 'folder'],
+      [3, 'line'],
+      [4, 'line'],
+      [5, 'board'],
+    ]);
+    expect(rows[1]).toMatchObject({ name: 'MyFavFolder', title: '我的資料夾' });
+    expect(rows[0]!.selected).toBe(true);
+  });
+
+  it('does not take an ordinary row of dashes in a title for a separator', () => {
+    const ordinary = parseFavorites(page(['      1   ------------ some text']));
+    expect(ordinary).toEqual([]);
+  });
+});
+
 describe('article code popup', () => {
   it('reads the code, board and URL wherever the box is drawn', () => {
     expect(parseAidPopup(screen('popup_normal'))).toEqual({

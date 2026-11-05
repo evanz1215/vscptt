@@ -9,7 +9,7 @@ import {
 import type { BoardPage } from '../../src/core/models';
 import { PttService, type PttServiceOptions } from '../../src/core/service';
 import { Session } from '../../src/core/session/session';
-import { FakeBbs, type FakeArticle, type FakeBbsOptions } from '../fakes/fakeBbs';
+import { FOLDER, FakeBbs, LINE, type FakeArticle, type FakeBbsOptions } from '../fakes/fakeBbs';
 import type { FakeTransport } from '../fakes/fakeTransport';
 
 const PGDN = '\x1b[6~';
@@ -705,6 +705,27 @@ describe('reading the newest page again after paging far back', () => {
       expect(again.next).toEqual(first.next);
     }
   );
+});
+
+describe('favorites with folders and separators', () => {
+  const boardName = (i: number) => `Board${String(i).padStart(2, '0')}`;
+  // 45 entries: every 7th is a folder, every 11th a separator; the rest are boards.
+  const entries = Array.from({ length: 45 }, (_, k) =>
+    (k + 1) % 7 === 0 ? `${FOLDER}我的資料夾${k + 1}` : (k + 1) % 11 === 0 ? LINE : boardName(k + 1)
+  );
+  const boardsOnly = entries.filter((e) => e !== LINE && !e.startsWith(FOLDER));
+
+  it('lists only the boards, even when folders and separators shorten a screen', async () => {
+    const boards = Object.fromEntries(boardsOnly.map((b) => [b, board(1)]));
+    const { service } = await setup(boards, {
+      favorites: entries,
+      service: { nextPageTimeoutMs: 150 },
+    });
+
+    expect((await service.getFavorites()).map((f) => f.name)).toEqual(boardsOnly);
+    service.invalidate();
+    expect((await service.getFavorites()).map((f) => f.name)).toEqual(boardsOnly);
+  });
 });
 
 describe('favorites that span several screens', () => {

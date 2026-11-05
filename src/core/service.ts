@@ -304,6 +304,7 @@ export class PttService {
     }
 
     return [...all.values()]
+      .filter((r) => r.kind === 'board') // folders and separators are not boards; they only took a number
       .sort((a, b) => a.number - b.number)
       .map((r) => ({ name: r.name, category: r.category, title: r.title, unread: r.unread }));
   }

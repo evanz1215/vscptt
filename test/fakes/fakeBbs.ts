@@ -63,6 +63,9 @@ type Mode =
   | 'closed';
 
 const WINDOW = 20;
+/** Favorites entries that are not boards: `FOLDER + title` is a folder, `LINE` is a separator. */
+export const FOLDER = 'folder:';
+export const LINE = '---';
 
 const isWide = (cp: number): boolean =>
   (cp >= 0x1100 && cp <= 0x115f) ||
@@ -383,7 +386,7 @@ export class FakeBbs {
     const names = this.options.favorites;
     if (key === 'RIGHT' || key === 'ENTER') {
       const name = names[this.favoritesCursor];
-      if (name) {
+      if (name && !name.startsWith(FOLDER) && name !== LINE) {
         this.listParent = 'favorites';
         this.beginBoard(name);
       }
@@ -707,8 +710,14 @@ export class FakeBbs {
       .slice(this.favoritesTop, this.favoritesTop + WINDOW)
       .forEach((name, k) => {
         const i = this.favoritesTop + k;
+        const cursor = i === this.favoritesCursor ? '>' : ' ';
+        // Drawn like mbbsd/board.c: a folder is `MyFavFolder  目錄 ◎title`, a separator is a run of dashes.
         rows[3 + k] =
-          `${i === this.favoritesCursor ? '>' : ' '}${String(i + 1).padStart(6)} ˇ ${name.padEnd(13)} 綜合 ◎ [${name}] ${name} 板`;
+          name === LINE
+            ? `${cursor}${String(i + 1).padStart(6)}   ${'-'.repeat(12)}      ${'-'.repeat(42)}`
+            : name.startsWith(FOLDER)
+              ? `${cursor}${String(i + 1).padStart(6)}   MyFavFolder  目錄 ◎${name.slice(FOLDER.length)}`
+              : `${cursor}${String(i + 1).padStart(6)} ˇ ${name.padEnd(13)} 綜合 ◎ [${name}] ${name} 板`;
       });
     rows[23] = ' 我的最愛  (a)增加看板 (d)刪除 (g)新增目錄 (← )回上層 (h)說明';
     return rows;
