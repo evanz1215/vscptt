@@ -26,7 +26,13 @@ describe('what goes into the .vsix', () => {
       for (const file of files) {
         expect(file, file).not.toMatch(/^(\.doit|docs|src|test|node_modules|\.vscode)\//);
       }
-      expect(files).toEqual(['README.md', 'media/ptt.svg', 'out/extension.js', 'package.json']);
+      expect(files).toEqual([
+        'LICENSE',
+        'README.md',
+        'media/ptt.svg',
+        'out/extension.js',
+        'package.json',
+      ]);
     }
   );
 });

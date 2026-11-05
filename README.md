@@ -2,6 +2,16 @@
 
 在 VS Code 內瀏覽 PTT（唯讀）：登入、我的最愛、以名稱開啟看板、文章列表、閱讀文章。連線使用 WebSocket（`wss://ws.ptt.cc/bbs`），畫面以終端機模擬後解析。
 
+> **免責聲明**：這是非官方、個人製作的 PTT 瀏覽工具，與 PTT 或批踢踢實業坊沒有關係，也未經其授權或認可。它只有唯讀功能（不會發文、推文、寄信或刪除），但仍會用你的帳號登入真實的 PTT；使用時請遵守 PTT 的站規與服務條款。作者不對帳號被停權、資料遺失或任何其他損失負責，風險由使用者自行承擔。
+
+## 帳號安全
+
+- 密碼只在你登入時輸入。選「記住帳號和密碼」才會儲存，且只存放在 VS Code 的 SecretStorage（系統的安全儲存空間）；帳號存在 globalState。
+- 密碼不會寫進設定檔、記錄、輸出面板或錯誤訊息。畫面快照寫入輸出面板前，已遮蔽 IP 位址與帳號。
+- 「PTT: 清除已儲存的帳密」可隨時刪除已儲存的資料。
+- 公用電腦請選「都不記住」。
+- 連線只會到 `wss://ws.ptt.cc/bbs`。唯一的例外是圖片預覽：滑鼠停在圖片連結上時，VS Code 會直接向該圖片網站下載圖片，對方會看到你的網路位址（可用 `vscptt.preview.images` 關閉）。
+
 ## 使用
 
 1. 點活動列的「PTT」圖示，或從命令選擇區執行「PTT: 登入」。
@@ -62,4 +72,22 @@ $env:PTT_LIVE='1'; $env:PTT_USER='<id>'; $env:PTT_PASS='<password>'; pnpm exec v
 pnpm run package     # produces a .vsix
 ```
 
-打包前請在 `package.json` 設定 `publisher`。`.vsix` 只包含 `package.json`、`README.md`、`media/ptt.svg`、`out/extension.js`（由測試確認）。
+`.vsix` 只包含 `package.json`、`README.md`、`LICENSE`、`media/ptt.svg`、`out/extension.js`（由測試確認）。程式已用 esbuild 打成單一檔案，pnpm 與 vsce 的依賴檢查不相容，所以要加 `--no-dependencies`：
+
+```bash
+pnpm exec vsce package --no-dependencies
+```
+
+`package.json` 還沒有 `repository` 欄位，vsce 會警告；公開前請補上，或加 `--allow-missing-repository`。
+
+## 已知限制
+
+- 只能唯讀瀏覽。同一個帳號同時只有一條連線，操作會排隊執行，所以速度取決於 PTT 的回應。
+- 「我的最愛」裡的資料夾與分隔線不會顯示，放在資料夾裡的看板看不到。
+- 畫面是從終端機文字解析的；PTT 改版或遇到沒見過的畫面時，可能出現「畫面和預期不同」，這時請再試一次。
+- 很長或有特殊換行的文章，內容可能被截斷（上限見 `vscptt.article.maxPages`）。
+- 沒有自動重連，也沒有發文、推文、寄信等寫入功能。
+
+## 授權
+
+MIT，見 `LICENSE`。

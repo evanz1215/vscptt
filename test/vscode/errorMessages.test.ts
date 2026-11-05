@@ -29,9 +29,9 @@ describe('describeError', () => {
     expect(describeError(error)).toContain(expected);
   });
 
-  it('passes our own validation messages through', () => {
+  it('says in Chinese that the input was refused, then gives our validation message', () => {
     expect(describeError(new InvalidArgumentError('Not a list number: 0'))).toBe(
-      'Not a list number: 0'
+      '輸入的內容不符合規則：Not a list number: 0'
     );
   });
 

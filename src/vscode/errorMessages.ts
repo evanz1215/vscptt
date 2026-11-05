@@ -2,10 +2,6 @@ import { PttError } from '../core/errors';
 import { WaitTimeoutError } from '../core/queue/waitFor';
 import { WsConnectError } from '../core/transport/wsTransport';
 
-/**
- * A short Traditional Chinese sentence for an error, safe to show to the user. It never includes the screen
- * snapshots some errors carry, and never repeats text that came from the BBS.
- */
 let logger: ((text: string) => void) | undefined;
 
 /** Where to write the screen a timed-out step was looking at (the "PTT" output channel). */
@@ -13,6 +9,10 @@ export function setErrorLogger(write: ((text: string) => void) | undefined): voi
   logger = write;
 }
 
+/**
+ * A short Traditional Chinese sentence for an error, safe to show to the user. It never includes the screen
+ * snapshots some errors carry, and never repeats text that came from the BBS.
+ */
 export function describeError(error: unknown): string {
   if (error instanceof WaitTimeoutError) {
     // The screen is already masked (IP addresses, account name). It goes to the output channel only, never into a message.
@@ -48,7 +48,7 @@ export function describeError(error: unknown): string {
       case 'notLoggedIn':
         return '尚未登入 PTT。';
       case 'invalidArgument':
-        return error.message; // our own validation messages
+        return `輸入的內容不符合規則：${error.message}`; // our own validation messages, in English
     }
   }
   const text = error instanceof Error ? error.message : String(error);

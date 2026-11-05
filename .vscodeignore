@@ -13,3 +13,4 @@ pnpm-workspace.yaml
 .prettierrc.json
 **/*.map
 .gitignore
+.github/**
