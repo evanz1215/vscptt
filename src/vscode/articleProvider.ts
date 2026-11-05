@@ -22,13 +22,13 @@ function isSearchQuery(value: unknown): boolean {
   }
 }
 
-/** The tab shows the path, so make it readable and keep it a single safe path segment. */
+/** The tab shows the path, so make it readable and keep it a single safe path segment. The `.ptt` ending selects the colouring. */
 function tabName(title: string): string {
   const cleaned = Array.from(title)
     .filter((ch) => ch.charCodeAt(0) >= 32 && !'/\\?#%:*"<>|'.includes(ch))
     .join('')
     .trim();
-  return (cleaned.slice(0, 50) || 'article') + '.txt';
+  return (cleaned.slice(0, 50) || 'article') + '.ptt';
 }
 
 /**

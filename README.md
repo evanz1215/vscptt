@@ -72,7 +72,7 @@ $env:PTT_LIVE='1'; $env:PTT_USER='<id>'; $env:PTT_PASS='<password>'; pnpm exec v
 pnpm run package     # produces a .vsix
 ```
 
-`.vsix` 只包含 `package.json`、`README.md`、`LICENSE`、`media/ptt.svg`、`out/extension.js`（由測試確認）。程式已用 esbuild 打成單一檔案，pnpm 與 vsce 的依賴檢查不相容，所以要加 `--no-dependencies`：
+`.vsix` 只包含 `package.json`、`README.md`、`LICENSE`、`media/ptt.svg`、`syntaxes/ptt.tmLanguage.json`、`out/extension.js`（由測試確認）。程式已用 esbuild 打成單一檔案，pnpm 與 vsce 的依賴檢查不相容，所以要加 `--no-dependencies`：
 
 ```bash
 pnpm exec vsce package --no-dependencies

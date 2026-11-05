@@ -71,13 +71,13 @@ describe('article addresses', () => {
     const [, board, file, ...rest] = uri.path.split('/');
     expect(board).toBe('Dev');
     expect(rest).toEqual([]); // the title cannot add path segments
-    expect(file).toMatch(/\.txt$/);
+    expect(file).toMatch(/\.ptt$/);
     expect(file).not.toMatch(/[\\?#%:*"<>|]/);
     expect(file!.length).toBeLessThanOrEqual(60);
   });
 
   it('falls back to a plain name for an empty or all-unsafe title', () => {
-    expect(articleUri({ board: 'Dev', listNumber: 1 }, '///').path).toBe('/Dev/article.txt');
+    expect(articleUri({ board: 'Dev', listNumber: 1 }, '///').path).toBe('/Dev/article.ptt');
   });
 
   it('gives different articles different addresses', () => {

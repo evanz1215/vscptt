@@ -32,6 +32,7 @@ describe('what goes into the .vsix', () => {
         'media/ptt.svg',
         'out/extension.js',
         'package.json',
+        'syntaxes/ptt.tmLanguage.json',
       ]);
     }
   );

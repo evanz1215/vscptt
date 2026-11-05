@@ -1,0 +1,81 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "PTT",
+  "scopeName": "source.ptt",
+  "patterns": [
+    { "include": "#header" },
+    { "include": "#rule" },
+    { "include": "#push" },
+    { "include": "#notice" },
+    { "include": "#quote" },
+    { "include": "#signature" },
+    { "include": "#url" }
+  ],
+  "repository": {
+    "header": {
+      "match": "^(標題|作者|看板|時間|網址)(：)(.*)$",
+      "captures": {
+        "1": { "name": "keyword.other.header.ptt" },
+        "2": { "name": "punctuation.separator.ptt" },
+        "3": {
+          "patterns": [{ "include": "#url" }]
+        }
+      }
+    },
+    "rule": {
+      "match": "^─{10,}$",
+      "name": "comment.line.rule.ptt"
+    },
+    "push": {
+      "patterns": [
+        {
+          "match": "^(推) ([^\\s:]+)(:) (.*?)(\\s{4}\\S.*)$",
+          "captures": {
+            "1": { "name": "markup.inserted.push.ptt" },
+            "2": { "name": "entity.name.function.user.ptt" },
+            "3": { "name": "punctuation.separator.ptt" },
+            "4": { "patterns": [{ "include": "#url" }] },
+            "5": { "name": "comment.line.time.ptt" }
+          }
+        },
+        {
+          "match": "^(噓) ([^\\s:]+)(:) (.*?)(\\s{4}\\S.*)$",
+          "captures": {
+            "1": { "name": "markup.deleted.boo.ptt" },
+            "2": { "name": "entity.name.function.user.ptt" },
+            "3": { "name": "punctuation.separator.ptt" },
+            "4": { "patterns": [{ "include": "#url" }] },
+            "5": { "name": "comment.line.time.ptt" }
+          }
+        },
+        {
+          "match": "^(→) ([^\\s:]+)(:) (.*?)(\\s{4}\\S.*)$",
+          "captures": {
+            "1": { "name": "markup.changed.arrow.ptt" },
+            "2": { "name": "entity.name.function.user.ptt" },
+            "3": { "name": "punctuation.separator.ptt" },
+            "4": { "patterns": [{ "include": "#url" }] },
+            "5": { "name": "comment.line.time.ptt" }
+          }
+        }
+      ]
+    },
+    "notice": {
+      "match": "^※.*$",
+      "name": "comment.line.notice.ptt",
+      "patterns": [{ "include": "#url" }]
+    },
+    "quote": {
+      "match": "^(?::|>).*$",
+      "name": "string.quoted.reply.ptt"
+    },
+    "signature": {
+      "match": "^--\\s*$",
+      "name": "comment.line.signature.ptt"
+    },
+    "url": {
+      "match": "https?://[\\x21-\\x7e]+",
+      "name": "markup.underline.link.ptt"
+    }
+  }
+}
