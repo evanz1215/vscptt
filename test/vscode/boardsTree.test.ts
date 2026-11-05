@@ -66,12 +66,65 @@ describe('root', () => {
   });
 });
 
+describe('favorites folders', () => {
+  const board = (name: string) => ({
+    kind: 'board' as const,
+    name,
+    category: '綜合',
+    title: `${name} 板`,
+    unread: false,
+  });
+
+  it('shows a folder that opens into its boards, and a folder that could not be read', async () => {
+    const { connection, tree } = setup();
+    connection.read.favorites = [
+      board('Dev'),
+      {
+        kind: 'folder',
+        name: '',
+        category: '',
+        title: '工作',
+        unread: false,
+        entries: [
+          board('Dev'), // the same board, listed again inside the folder
+          {
+            kind: 'folder',
+            name: '',
+            category: '',
+            title: '深處',
+            unread: false,
+            entries: [board('Ops')],
+          },
+        ],
+      },
+      { kind: 'folder', name: '', category: '', title: '壞掉的', unread: false },
+    ];
+
+    const top = await tree.getChildren({ kind: 'group', group: 'favorites' });
+    const items = top.map((n) => tree.getTreeItem(n));
+    expect(items.map((i) => i.label)).toEqual(['Dev', '工作', '壞掉的']);
+    expect(items[1]!.contextValue).toBe('favoriteFolder');
+    expect(items[1]!.collapsibleState).toBe(vscode.TreeItemCollapsibleState.Collapsed);
+    expect(items[2]!.description).toBe('無法讀取');
+
+    const inside = await tree.getChildren(top[1]!);
+    expect(inside.map((n) => tree.getTreeItem(n).label)).toEqual(['Dev', '深處']);
+    const deeper = await tree.getChildren(inside[1]!);
+    expect(deeper.map((n) => tree.getTreeItem(n).label)).toEqual(['Ops']);
+    expect(await tree.getChildren(top[2]!)).toEqual([]);
+
+    // every node needs its own id, even the board listed twice
+    const ids = [...top, ...inside, ...deeper].map((n) => tree.getTreeItem(n).id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
 describe('favorites and opened boards', () => {
   it('lists the favorite boards with their category', async () => {
     const { connection, tree } = setup();
     connection.read.favorites = [
-      { name: 'Dev', category: '工作', title: '[軟工] 討論', unread: true },
-      { name: 'Ops', category: '程設', title: 'Ops 板', unread: false },
+      { kind: 'board', name: 'Dev', category: '工作', title: '[軟工] 討論', unread: true },
+      { kind: 'board', name: 'Ops', category: '程設', title: 'Ops 板', unread: false },
     ];
     const nodes = await tree.getChildren({ kind: 'group', group: 'favorites' });
     expect(nodes.map((n) => tree.getTreeItem(n).label)).toEqual(['Dev', 'Ops']);

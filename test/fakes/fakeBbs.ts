@@ -33,6 +33,8 @@ export interface FakeBbsOptions {
   users?: Record<string, string>;
   boards?: Record<string, FakeArticle[]>;
   favorites?: string[];
+  /** What is inside each favorites folder, by the entry that names it (`FOLDER + title`). May nest. */
+  folders?: Record<string, string[]>;
   duplicateLogin?: boolean;
   deleteAttempts?: boolean;
   frequentNotice?: boolean;
@@ -144,8 +146,14 @@ export class FakeBbs {
   private listParent: 'main' | 'favorites' = 'main';
   /** Observed: PTT puts you back where you left a board, not at its end. */
   private readonly lastPosition = new Map<string, { cursor: number; top: number }>();
-  private favoritesCursor = 0;
-  private favoritesTop = 0;
+  /** The favorites list and the folders opened inside it; the last one is on screen. */
+  private readonly favoriteLevels: Array<{
+    names: string[];
+    cursor: number;
+    top: number;
+    /** The row that opened this level, so Left puts the cursor back on it. */
+    from?: number;
+  }> = [];
   private items: FakeArticle[] = [];
   private cursor = 0;
   private top = 0;
@@ -164,6 +172,7 @@ export class FakeBbs {
       users: options.users ?? { alice: 'secret' },
       boards: options.boards ?? {},
       favorites: options.favorites ?? [],
+      folders: options.folders ?? {},
       duplicateLogin: options.duplicateLogin ?? false,
       deleteAttempts: options.deleteAttempts ?? false,
       frequentNotice: options.frequentNotice ?? false,
@@ -371,6 +380,7 @@ export class FakeBbs {
       if (this.menuCursor === 'F') {
         // Like PTT, the favorites list comes back on the page and row where it was left.
         this.mode = 'favorites';
+        this.favoriteLevels.length = Math.min(this.favoriteLevels.length, 1);
         this.render();
       } else if (this.menuCursor === 'N') {
         this.mode = 'namelist';
@@ -382,33 +392,75 @@ export class FakeBbs {
     }
   }
 
+  /** The level on screen. The list is created on first use and, like PTT, remembers where it was left. */
+  private get fav() {
+    if (this.favoriteLevels.length === 0) {
+      this.favoriteLevels.push({ names: this.options.favorites, cursor: 0, top: 0 });
+    }
+    return this.favoriteLevels[this.favoriteLevels.length - 1]!;
+  }
+
   private onFavorites(key: string): void {
-    const names = this.options.favorites;
+    const level = this.fav;
+    const names = level.names;
+    if (/^\d$/.test(key)) {
+      this.buffer += key; // a row number, finished with Enter
+      return;
+    }
+    if (key === 'ENTER' && /^\d+$/.test(this.buffer)) {
+      const row = Math.min(Math.max(Number(this.buffer), 1), names.length) - 1;
+      this.buffer = '';
+      level.cursor = row;
+      level.top = Math.floor(row / WINDOW) * WINDOW;
+      this.render();
+      return;
+    }
+    this.buffer = '';
     if (key === 'RIGHT' || key === 'ENTER') {
-      const name = names[this.favoritesCursor];
-      if (name && !name.startsWith(FOLDER) && name !== LINE) {
+      const name = names[level.cursor];
+      if (name?.startsWith(FOLDER)) {
+        this.favoriteLevels.push({
+          names: this.options.folders?.[name] ?? [],
+          cursor: 0,
+          top: 0,
+          from: level.cursor,
+        });
+        this.render();
+      } else if (name && name !== LINE) {
         this.listParent = 'favorites';
         this.beginBoard(name);
       }
       return;
     }
     if (key === 'LEFT') {
-      this.mode = 'main';
+      if (this.favoriteLevels.length > 1) {
+        this.favoriteLevels.pop();
+      } else {
+        this.mode = 'main';
+      }
     } else if (key === 'DOWN') {
-      this.favoritesCursor = Math.min(this.favoritesCursor + 1, names.length - 1);
-      if (this.favoritesCursor >= this.favoritesTop + WINDOW) this.favoritesTop += WINDOW;
+      level.cursor = Math.min(level.cursor + 1, names.length - 1);
+      if (level.cursor >= level.top + WINDOW) level.top += WINDOW;
     } else if (key === 'UP') {
-      this.favoritesCursor = Math.max(this.favoritesCursor - 1, 0);
-      if (this.favoritesCursor < this.favoritesTop) this.favoritesTop -= WINDOW;
+      level.cursor = Math.max(level.cursor - 1, 0);
+      if (level.cursor < level.top) level.top -= WINDOW;
     } else if (key === 'PGDN') {
-      // Observed behaviour of a paged list: at the last page nothing changes.
-      if (this.favoritesTop + WINDOW < names.length) {
-        this.favoritesTop += WINDOW;
-        this.favoritesCursor = this.favoritesTop;
+      // PTT wraps: on the last page it goes back to the first row.
+      if (level.top + WINDOW < names.length) {
+        level.top += WINDOW;
+        level.cursor = level.top;
+      } else {
+        level.top = 0;
+        level.cursor = 0;
       }
     } else if (key === 'PGUP') {
-      this.favoritesTop = Math.max(this.favoritesTop - WINDOW, 0);
-      this.favoritesCursor = this.favoritesTop;
+      if (level.top === 0) {
+        level.top = Math.max(Math.floor((names.length - 1) / WINDOW), 0) * WINDOW;
+        level.cursor = Math.max(names.length - 1, 0);
+      } else {
+        level.top = Math.max(level.top - WINDOW, 0);
+        level.cursor = level.top;
+      }
     } else if (key !== 'REDRAW') {
       return;
     }
@@ -706,19 +758,18 @@ export class FakeBbs {
     rows[0] = '【看板列表】                     批踢踢實業坊';
     rows[1] = '[y]列出全部 [→ ]進入 [s]找看板 [/]搜尋';
     rows[2] = '   編號   看  板       類別   中   文   敘   述';
-    this.options.favorites
-      .slice(this.favoritesTop, this.favoritesTop + WINDOW)
-      .forEach((name, k) => {
-        const i = this.favoritesTop + k;
-        const cursor = i === this.favoritesCursor ? '>' : ' ';
-        // Drawn like mbbsd/board.c: a folder is `MyFavFolder  目錄 ◎title`, a separator is a run of dashes.
-        rows[3 + k] =
-          name === LINE
-            ? `${cursor}${String(i + 1).padStart(6)}   ${'-'.repeat(12)}      ${'-'.repeat(42)}`
-            : name.startsWith(FOLDER)
-              ? `${cursor}${String(i + 1).padStart(6)}   MyFavFolder  目錄 ◎${name.slice(FOLDER.length)}`
-              : `${cursor}${String(i + 1).padStart(6)} ˇ ${name.padEnd(13)} 綜合 ◎ [${name}] ${name} 板`;
-      });
+    const level = this.fav;
+    level.names.slice(level.top, level.top + WINDOW).forEach((name, k) => {
+      const i = level.top + k;
+      const cursor = i === level.cursor ? '>' : ' ';
+      // Drawn like mbbsd/board.c: a folder is `MyFavFolder  目錄 ◎title`, a separator is a run of dashes.
+      rows[3 + k] =
+        name === LINE
+          ? `${cursor}${String(i + 1).padStart(6)}   ${'-'.repeat(12)}      ${'-'.repeat(42)}`
+          : name.startsWith(FOLDER)
+            ? `${cursor}${String(i + 1).padStart(6)}   MyFavFolder  目錄 ◎${name.slice(FOLDER.length)}`
+            : `${cursor}${String(i + 1).padStart(6)} ˇ ${name.padEnd(13)} 綜合 ◎ [${name}] ${name} 板`;
+    });
     rows[23] = ' 我的最愛  (a)增加看板 (d)刪除 (g)新增目錄 (← )回上層 (h)說明';
     return rows;
   }

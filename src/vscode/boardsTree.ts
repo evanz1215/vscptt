@@ -17,7 +17,16 @@ export type Group = 'favorites' | 'opened' | 'search';
 export type TreeNode =
   | { kind: 'login'; connecting: boolean }
   | { kind: 'group'; group: Group }
-  | { kind: 'board'; group: Group; board: string; category?: string; title?: string }
+  | {
+      kind: 'board';
+      group: Group;
+      board: string;
+      category?: string;
+      title?: string;
+      /** The favorites folder it was listed in; the same board can be listed in several places. */
+      place?: string;
+    }
+  | { kind: 'folder'; path: string; title: string; entries?: FavoriteEntry[] }
   | { kind: 'pinned'; group: Group; board: string; count: number }
   | { kind: 'search'; id: number; board: string; query: SearchQuery }
   | { kind: 'article'; group: Group; summary: ArticleSummary; searchId?: number }
@@ -41,6 +50,23 @@ export interface TreeConnection {
 }
 
 const icon = (id: string) => new vscode.ThemeIcon(id);
+
+/** Tree nodes for a favorites list: its boards, and its folders (which open into the same kind of list). */
+function favoriteItems(entries: FavoriteEntry[], parent: string): TreeNode[] {
+  return entries.map((f, i): TreeNode => {
+    if (f.kind === 'folder') {
+      return { kind: 'folder', path: `${parent}/${i}`, title: f.title, entries: f.entries };
+    }
+    return {
+      kind: 'board',
+      group: 'favorites',
+      board: f.name,
+      category: f.category,
+      title: f.title,
+      place: parent,
+    };
+  });
+}
 
 function errorNode(error: unknown): TreeNode {
   const lost = error instanceof ConnectionClosedError || error instanceof NotLoggedInError;
@@ -178,6 +204,8 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
             : this.searches.map((s) => ({ kind: 'search' as const, ...s }));
       case 'search':
         return this.searchChildren(node.id);
+      case 'folder':
+        return favoriteItems(node.entries ?? [], node.path);
       case 'board':
         return this.boardChildren(node.group, node.board);
       case 'pinned':
@@ -221,11 +249,22 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
       }
       case 'board': {
         const item = new vscode.TreeItem(node.board, vscode.TreeItemCollapsibleState.Collapsed);
-        item.id = `board:${node.group}:${node.board.toLowerCase()}`;
+        item.id = `board:${node.group}:${node.place ?? ''}:${node.board.toLowerCase()}`;
         item.description = node.category;
         item.tooltip = node.title ?? node.board;
         item.iconPath = icon('comment-discussion');
         item.contextValue = 'board';
+        return item;
+      }
+      case 'folder': {
+        const item = new vscode.TreeItem(
+          node.title || '資料夾',
+          vscode.TreeItemCollapsibleState.Collapsed
+        );
+        item.id = `folder:${node.path}`;
+        item.description = node.entries ? undefined : '無法讀取';
+        item.iconPath = icon('folder');
+        item.contextValue = 'favoriteFolder';
         return item;
       }
       case 'search': {
@@ -299,13 +338,7 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
       if (favorites.length === 0) {
         return [{ kind: 'message', text: '最愛清單是空的', icon: 'info' }];
       }
-      return favorites.map((f) => ({
-        kind: 'board' as const,
-        group: 'favorites' as const,
-        board: f.name,
-        category: f.category,
-        title: f.title,
-      }));
+      return favoriteItems(favorites, '');
     } catch (error) {
       return [errorNode(error)];
     }

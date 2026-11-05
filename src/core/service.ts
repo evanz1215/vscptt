@@ -5,6 +5,7 @@ import {
   BoardNotFoundError,
   ConnectionClosedError,
   InvalidArgumentError,
+  UnexpectedScreenError,
 } from './errors';
 import { Keys } from './keys';
 import type {
@@ -30,7 +31,12 @@ import {
   parseBoardList,
   sameBoard,
 } from './screens/boardList';
-import { isFavoritesScreen, parseFavorites } from './screens/favorites';
+import {
+  type FavoriteRow,
+  isFavoritesScreen,
+  parseFavorites,
+  selectedNumber,
+} from './screens/favorites';
 import {
   isAnyKeyPrompt,
   isBoardSelectPrompt,
@@ -60,6 +66,9 @@ export interface PttServiceOptions {
 
 const BOARD_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,23}$/;
 const FAVORITES_PAGE_LIMIT = 10;
+/** Folders inside folders, and how many folders one reading may open: a bound on time and on being lost. */
+const FAVORITES_DEPTH_LIMIT = 3;
+const FAVORITES_FOLDER_LIMIT = 20;
 const LIST_PAGE_SIZE = 20;
 const MAX_LIST_NUMBER = 9_999_999; // PTT shows at most 6 digits per number; stay clear of exponent notation
 
@@ -235,9 +244,109 @@ export class PttService {
   // ---- operations (all run inside the session queue) ----
 
   private async loadFavorites(): Promise<FavoriteEntry[]> {
+    await this.session.toMainMenu();
+    this.session.send('F', Keys.RIGHT);
+    return this.readFavoriteLevel(0, { folders: FAVORITES_FOLDER_LIMIT, failed: false });
+  }
+
+  /**
+   * Reads the favorites list on screen (the top one or a folder): boards, and the folders inside it, which are
+   * opened one by one. A folder that cannot be read is left without `entries` instead of failing the whole list,
+   * and once one fails no further folder is tried: we may no longer know which level the screen is on.
+   */
+  private async readFavoriteLevel(
+    depth: number,
+    budget: { folders: number; failed: boolean }
+  ): Promise<FavoriteEntry[]> {
+    const rows = await this.readFavoriteRows();
+    const entries: FavoriteEntry[] = [];
+    for (const row of rows) {
+      if (row.kind === 'line') {
+        continue;
+      }
+      if (row.kind === 'board') {
+        entries.push({
+          kind: 'board',
+          name: row.name,
+          category: row.category,
+          title: row.title,
+          unread: row.unread,
+        });
+        continue;
+      }
+      const folder: FavoriteEntry = {
+        kind: 'folder',
+        name: '',
+        category: '',
+        title: row.title,
+        unread: false,
+      };
+      entries.push(folder);
+      if (budget.failed || budget.folders <= 0 || depth >= FAVORITES_DEPTH_LIMIT) {
+        continue;
+      }
+      budget.folders--;
+      try {
+        folder.entries = await this.readFolder(row, depth, budget);
+      } catch (error) {
+        if (!(error instanceof WaitTimeoutError || error instanceof UnexpectedScreenError)) {
+          throw error;
+        }
+        budget.failed = true;
+      }
+    }
+    return entries;
+  }
+
+  /** Opens the folder in `row`, reads it, and comes back out onto the same row. */
+  private async readFolder(
+    row: FavoriteRow,
+    depth: number,
+    budget: { folders: number; failed: boolean }
+  ): Promise<FavoriteEntry[]> {
     const s = this.session;
-    await s.toMainMenu();
-    s.send('F', Keys.RIGHT);
+    await this.selectFavorite(row.number);
+    const listBefore = s.lines.slice(3, 23).join('\n');
+    s.send(Keys.RIGHT);
+    await s.flush();
+    // The inside of a folder looks like the list around it, so the only sign that it opened is that the rows changed.
+    if (s.lines.slice(3, 23).join('\n') === listBefore) {
+      throw new UnexpectedScreenError('The favorites folder did not open', s.snapshot());
+    }
+    const inside = await this.readFavoriteLevel(depth + 1, budget);
+    s.send(Keys.LEFT);
+    await s.waitFor(
+      (l) => (isFavoritesScreen(l) && selectedNumber(l) === row.number ? true : false),
+      'the favorites list after leaving a folder'
+    );
+    return inside;
+  }
+
+  /** Types a row number to put the favorites cursor on that row. */
+  private async selectFavorite(n: number): Promise<void> {
+    if (!isListNumber(n)) {
+      throw new InvalidArgumentError(`Not a list number: ${n}`); // never type anything but plain digits
+    }
+    const s = this.session;
+    s.send(String(n), Keys.ENTER);
+    const target = await s.waitFor((l) => {
+      if (!isFavoritesScreen(l)) {
+        return false;
+      }
+      const selected = parseFavorites(l).find((r) => r.selected);
+      return selected?.number === n ? selected : false;
+    }, `favorites row ${n} to be selected`);
+    if (target.kind !== 'folder') {
+      throw new UnexpectedScreenError(
+        'The favorites row is not the folder that was expected',
+        s.snapshot()
+      );
+    }
+  }
+
+  /** Every row of the favorites list on screen, all pages, in order. */
+  private async readFavoriteRows(): Promise<FavoriteRow[]> {
+    const s = this.session;
     let rows = (
       await s.waitFor(
         (l) => (isFavoritesScreen(l) ? { rows: parseFavorites(l) } : false),
@@ -303,10 +412,7 @@ export class PttService {
       }
     }
 
-    return [...all.values()]
-      .filter((r) => r.kind === 'board') // folders and separators are not boards; they only took a number
-      .sort((a, b) => a.number - b.number)
-      .map((r) => ({ name: r.name, category: r.category, title: r.title, unread: r.unread }));
+    return [...all.values()].sort((a, b) => a.number - b.number);
   }
 
   /** From the main menu: `s`, the name, Enter. Returns the list screen, or null if another board (or none) came up. */

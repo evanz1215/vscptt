@@ -6,6 +6,7 @@ import {
   InvalidArgumentError,
   NotLoggedInError,
 } from '../../src/core/errors';
+import { Keys } from '../../src/core/keys';
 import type { BoardPage } from '../../src/core/models';
 import { PttService, type PttServiceOptions } from '../../src/core/service';
 import { Session } from '../../src/core/session/session';
@@ -715,16 +716,107 @@ describe('favorites with folders and separators', () => {
   );
   const boardsOnly = entries.filter((e) => e !== LINE && !e.startsWith(FOLDER));
 
-  it('lists only the boards, even when folders and separators shorten a screen', async () => {
+  it('lists every board, even when folders and separators shorten a screen', async () => {
     const boards = Object.fromEntries(boardsOnly.map((b) => [b, board(1)]));
     const { service } = await setup(boards, {
       favorites: entries,
       service: { nextPageTimeoutMs: 150 },
     });
 
-    expect((await service.getFavorites()).map((f) => f.name)).toEqual(boardsOnly);
+    const names = (list: Awaited<ReturnType<typeof service.getFavorites>>) =>
+      list.filter((f) => f.kind === 'board').map((f) => f.name);
+    expect(names(await service.getFavorites())).toEqual(boardsOnly);
     service.invalidate();
-    expect((await service.getFavorites()).map((f) => f.name)).toEqual(boardsOnly);
+    expect(names(await service.getFavorites())).toEqual(boardsOnly);
+  });
+});
+
+describe('favorites folders', () => {
+  const work = FOLDER + 'Work';
+  const archive = FOLDER + 'Archive';
+  const nested = FOLDER + 'Nested';
+  const empty = FOLDER + 'Empty';
+  const manyInside = Array.from({ length: 25 }, (_, i) => `Many${String(i + 1).padStart(2, '0')}`);
+  const folders = {
+    [work]: ['Dev', LINE, nested, 'Ops'],
+    [nested]: ['Deep1', 'Deep2'],
+    [archive]: manyInside,
+    [empty]: [],
+  };
+  const root = ['Top1', work, 'Top2', LINE, archive, empty, 'Top3'];
+  const everyBoard = ['Top1', 'Dev', 'Ops', 'Deep1', 'Deep2', 'Top2', ...manyInside, 'Top3'];
+
+  async function open(extra: { bbs?: FakeBbsOptions } = {}) {
+    const boards = Object.fromEntries(everyBoard.map((b) => [b, board(1)]));
+    return setup(boards, {
+      favorites: root,
+      bbs: { folders, ...extra.bbs },
+      service: { nextPageTimeoutMs: 150 },
+    });
+  }
+
+  it('reads what is inside each folder, nested folders and empty folders included', async () => {
+    const { service } = await open();
+    const list = await service.getFavorites();
+
+    expect(list.map((f) => (f.kind === 'board' ? f.name : f.title))).toEqual([
+      'Top1',
+      'Work',
+      'Top2',
+      'Archive',
+      'Empty',
+      'Top3',
+    ]);
+    const [, workFolder, , archiveFolder, emptyFolder] = list;
+    expect(workFolder!.entries!.map((f) => (f.kind === 'board' ? f.name : f.title))).toEqual([
+      'Dev',
+      'Nested',
+      'Ops',
+    ]);
+    expect(workFolder!.entries![1]!.entries!.map((f) => f.name)).toEqual(['Deep1', 'Deep2']);
+    expect(archiveFolder!.entries!.map((f) => f.name)).toEqual(manyInside); // two screens inside
+    expect(emptyFolder!.entries).toEqual([]);
+  });
+
+  it('gives the same answer again after a refresh, and leaves the session usable', async () => {
+    const { service } = await open();
+    const first = await service.getFavorites();
+    service.invalidate();
+    expect(await service.getFavorites()).toEqual(first);
+    expect((await service.getBoardPage('Dev')).articles).toHaveLength(1);
+  });
+
+  it('keeps what it read when a later folder will not open, and stops trying more', async () => {
+    const { service, transport } = await open();
+    const original = transport.send.bind(transport);
+    let rights = 0;
+    (transport as { send: unknown }).send = (data: string) => {
+      // "F" and its Right travel together, so the first Right seen here opens Work; every later one is lost.
+      if (data === Keys.RIGHT && ++rights > 1) {
+        return;
+      }
+      original(data);
+    };
+
+    const list = await service.getFavorites();
+
+    expect(list.filter((f) => f.kind === 'board').map((f) => f.name)).toEqual([
+      'Top1',
+      'Top2',
+      'Top3',
+    ]);
+    const [work, archive, emptyFolder] = list.filter((f) => f.kind === 'folder');
+    // Work opened. The folder inside it (Nested) did not, and after that no other folder was tried.
+    expect(work!.entries!.map((f) => (f.kind === 'board' ? f.name : f.title))).toEqual([
+      'Dev',
+      'Nested',
+      'Ops',
+    ]);
+    expect(work!.entries![1]!.entries).toBeUndefined();
+    expect(archive!.entries).toBeUndefined();
+    expect(emptyFolder!.entries).toBeUndefined();
+    // and the session is still where it can be used
+    expect((await service.getBoardPage('Dev')).articles).toHaveLength(1);
   });
 });
 

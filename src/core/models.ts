@@ -74,10 +74,15 @@ export interface Article {
 }
 
 export interface FavoriteEntry {
+  kind: 'board' | 'folder';
+  /** The board name; empty for a folder. */
   name: string;
   category: string;
+  /** A board's description, or a folder's title. */
   title: string;
   unread: boolean;
+  /** A folder's contents. Missing when the folder could not be opened. */
+  entries?: FavoriteEntry[];
 }
 
 /** How to find an article in a board list. */

@@ -26,6 +26,11 @@ const FOLDER_NAME = 'MyFavFolder';
 const FOLDER_CLASS = '目錄';
 const LINE = /^([> ])\s*(\d+)\s+(?:D\s+)?-{12}\s+-{12,}\s*$/;
 
+/** The number of the row the cursor is on, if it is on a row we recognise. */
+export function selectedNumber(lines: Lines): number | undefined {
+  return parseFavorites(lines).find((r) => r.selected)?.number;
+}
+
 /** Boards, folders and separator lines, in screen order. Only the boards can be entered. */
 export function parseFavorites(lines: Lines): FavoriteRow[] {
   const rows: FavoriteRow[] = [];
