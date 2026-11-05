@@ -135,6 +135,11 @@
         "command": "vscptt.copyArticleUrl",
         "title": "複製文章網址",
         "category": "PTT"
+      },
+      {
+        "command": "vscptt.openArticleInBrowser",
+        "title": "在瀏覽器開啟文章",
+        "category": "PTT"
       }
     ],
     "menus": {
@@ -153,6 +158,10 @@
         },
         {
           "command": "vscptt.copyArticleUrl",
+          "when": "false"
+        },
+        {
+          "command": "vscptt.openArticleInBrowser",
           "when": "false"
         },
         {
@@ -211,6 +220,11 @@
           "command": "vscptt.refresh",
           "when": "view == vscptt.boards && viewItem == board",
           "group": "inline"
+        },
+        {
+          "command": "vscptt.openArticleInBrowser",
+          "when": "view == vscptt.boards && viewItem =~ /^article/",
+          "group": "1_copy@0"
         },
         {
           "command": "vscptt.copyArticleUrl",

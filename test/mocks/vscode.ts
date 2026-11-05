@@ -148,6 +148,7 @@ interface MockState {
   outputLines: string[];
   messageAnswers: Array<string | undefined>;
   clipboard: string;
+  externalLinks: string[];
   commands: Map<string, (...args: unknown[]) => unknown>;
   executed: Array<{ command: string; args: unknown[] }>;
   contexts: Map<string, unknown>;
@@ -194,6 +195,7 @@ const fresh = (): MockState => ({
   outputLines: [],
   messageAnswers: [],
   clipboard: '',
+  externalLinks: [],
   commands: new Map(),
   executed: [],
   contexts: new Map(),
@@ -333,6 +335,10 @@ export const languages = {
 };
 
 export const env = {
+  async openExternal(uri: Uri): Promise<boolean> {
+    mock.externalLinks.push(uri.toString());
+    return true;
+  },
   clipboard: {
     async writeText(value: string): Promise<void> {
       mock.clipboard = value;

@@ -175,6 +175,7 @@ describe('what package.json declares matches what the code does', () => {
       'vscptt.copyArticleUrl',
       'vscptt.loadMore',
       'vscptt.openArticle',
+      'vscptt.openArticleInBrowser',
       'vscptt.removeSearch',
     ]);
   });
@@ -213,6 +214,10 @@ describe('using it, start to finish', () => {
     expect(mock.clipboard).toBe('https://www.ptt.cc/bbs/Dev/M.30.A.001.html');
     await t.run('vscptt.copyArticleId', newest);
     expect(mock.clipboard).toMatch(/^#1/);
+
+    // and open it in the browser: the address is checked, then handed over once
+    await t.run('vscptt.openArticleInBrowser', newest);
+    expect(mock.externalLinks).toEqual(['https://www.ptt.cc/bbs/Dev/M.30.A.001.html']);
 
     // load older articles through the node's own command
     await t.invoke(children.at(-1)!);

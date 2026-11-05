@@ -97,6 +97,11 @@ async function askQuery(): Promise<SearchQuery | undefined> {
   return input === undefined ? undefined : { kind, text: kind === 'title' ? input.trim() : input };
 }
 
+/** The one address shape an article page has; nothing else is ever opened in the browser. */
+const ARTICLE_URL =
+  /^https:\/\/www\.ptt\.cc\/bbs\/[A-Za-z0-9_-]+\/M\.\d+\.A\.[0-9A-Fa-f]{3}\.html$/;
+export const isPttArticleUrl = (url: string): boolean => ARTICLE_URL.test(url);
+
 /** Registers every command declared in package.json. */
 export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
   const { connection, tree, articles, opened, store, ui } = deps;
@@ -291,9 +296,10 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
 
     register('vscptt.copyArticleId', (arg?: unknown) => copyFromArticle(arg, 'aid')),
     register('vscptt.copyArticleUrl', (arg?: unknown) => copyFromArticle(arg, 'url')),
+    register('vscptt.openArticleInBrowser', (arg?: unknown) => copyFromArticle(arg, 'open')),
   ];
 
-  async function copyFromArticle(arg: unknown, what: 'aid' | 'url'): Promise<void> {
+  async function copyFromArticle(arg: unknown, what: 'aid' | 'url' | 'open'): Promise<void> {
     const node = arg as Partial<TreeNode> | undefined;
     const summary = toSummary(node?.kind === 'article' ? node.summary : arg);
     if (!summary || !(await ensureLoggedIn())) {
@@ -303,6 +309,15 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       const resolved = await busy('正在取得文章代碼…', () =>
         connection.service.resolveArticleId(toRef(summary))
       );
+      if (what === 'open') {
+        // The address was read off the screen, so only the exact shape of an article page is handed to the browser.
+        if (!isPttArticleUrl(resolved.url)) {
+          ui.showError('取得的文章網址格式不正確，已取消開啟。');
+          return;
+        }
+        await vscode.env.openExternal(vscode.Uri.parse(resolved.url));
+        return;
+      }
       const value = what === 'aid' ? resolved.aid : resolved.url;
       await vscode.env.clipboard.writeText(value);
       ui.showInfo(`已複製${what === 'aid' ? '文章代碼' : '文章網址'}：${value}`);
