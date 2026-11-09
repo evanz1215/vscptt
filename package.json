@@ -2,9 +2,13 @@
   "name": "vscptt",
   "displayName": "vscptt",
   "description": "在 VS Code 裡瀏覽 PTT：看板、文章與推文（唯讀）",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "Evan",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/evanz1215/vscptt.git"
+  },
   "private": true,
   "engines": {
     "vscode": "^1.100.0"
@@ -422,7 +426,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "package": "vsce package",
+    "package": "vsce package --no-dependencies",
     "vscode:prepublish": "pnpm run build"
   },
   "devDependencies": {

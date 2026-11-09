@@ -77,13 +77,7 @@ $env:PTT_LIVE='1'; $env:PTT_USER='<id>'; $env:PTT_PASS='<password>'; pnpm exec v
 pnpm run package     # produces a .vsix
 ```
 
-`.vsix` 只包含 `package.json`、`README.md`、`LICENSE`、`media/ptt.svg`、`syntaxes/ptt.tmLanguage.json`、`out/extension.js`（由測試確認）。程式已用 esbuild 打成單一檔案，pnpm 與 vsce 的依賴檢查不相容，所以要加 `--no-dependencies`：
-
-```bash
-pnpm exec vsce package --no-dependencies
-```
-
-`package.json` 還沒有 `repository` 欄位，vsce 會警告；公開前請補上，或加 `--allow-missing-repository`。
+`.vsix` 只包含 `package.json`、`README.md`、`LICENSE`、`media/ptt.svg`、`syntaxes/ptt.tmLanguage.json`、`out/extension.js`（由測試確認）。程式已用 esbuild 打成單一檔案，pnpm 與 vsce 的依賴檢查不相容，所以 `package` 指令已帶 `--no-dependencies`。
 
 ## 已知限制
 
