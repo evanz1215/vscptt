@@ -1,11 +1,18 @@
 import * as vscode from 'vscode';
+import { parseArticleAddress } from '../core/aid';
 import type { ArticleRef, ArticleSummary, SearchQuery } from '../core/models';
-import { MAX_PUSH_THRESHOLD, MAX_TITLE_LENGTH, toSearchInput } from '../core/search';
+import { MAX_PUSH_THRESHOLD, MAX_TITLE_LENGTH, threadQuery, toSearchInput } from '../core/search';
 import { isValidBoardName } from '../core/service';
-import { ARTICLE_SCHEME, type ArticleContentProvider, articleUri } from './articleProvider';
+import {
+  ARTICLE_SCHEME,
+  type ArticleContentProvider,
+  articleUri,
+  refFromUri,
+} from './articleProvider';
 import type { BoardsTreeProvider, TreeNode } from './boardsTree';
 import type { ConnectionManager, LoginUi } from './connection';
 import type { CredentialStore } from './credentialStore';
+import type { HostKeyStore } from './hostKeys';
 import { describeError } from './errorMessages';
 import type { OpenedBoards } from './openedBoards';
 
@@ -16,9 +23,11 @@ export interface CommandDeps {
   opened: OpenedBoards;
   store: CredentialStore;
   ui: LoginUi;
+  hostKeys: Pick<HostKeyStore, 'known' | 'forget'>;
 }
 
 const CLEAR = '清除';
+const FORGET = '忘記';
 
 /** The article a tree node or menu stands for, if the argument really is one. */
 function toSummary(arg: unknown): ArticleSummary | undefined {
@@ -50,6 +59,33 @@ function toRef(summary: ArticleSummary): ArticleRef {
         ...(summary.search ? { search: summary.search } : {}),
       };
 }
+
+/** Asks for a board name. Undefined when the user backs out. */
+async function askBoard(title: string, prompt: string): Promise<string | undefined> {
+  const input = await vscode.window.showInputBox({
+    title,
+    prompt,
+    placeHolder: '例如 Soft_Job',
+    validateInput: (v) =>
+      isValidBoardName(v.trim()) ? undefined : '看板名稱只能用英文字母、數字、底線、句點和連字號',
+  });
+  return input?.trim() || undefined;
+}
+
+/** The article tab a command was started from: its address, or the active editor's. */
+function articleTab(arg: unknown): vscode.Uri | undefined {
+  const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
+  return uri?.scheme === ARTICLE_SCHEME ? uri : undefined;
+}
+
+/** Shows `uri` with the cursor on `line`, in the middle of the editor. */
+async function revealLine(uri: vscode.Uri, line: number): Promise<void> {
+  const editor = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri));
+  editor.selection = new vscode.Selection(line, 0, line, 0);
+  editor.revealRange(new vscode.Range(line, 0, line, 0), vscode.TextEditorRevealType.InCenter);
+}
+
+const JUMP = '跳到新推文';
 
 /** Asks what to search for. Undefined when the user backs out at any step. */
 async function askQuery(): Promise<SearchQuery | undefined> {
@@ -104,7 +140,7 @@ export const isPttArticleUrl = (url: string): boolean => ARTICLE_URL.test(url);
 
 /** Registers every command declared in package.json. */
 export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
-  const { connection, tree, articles, opened, store, ui } = deps;
+  const { connection, tree, articles, opened, store, ui, hostKeys } = deps;
   const register = (id: string, handler: (...args: unknown[]) => unknown) =>
     vscode.commands.registerCommand(id, handler);
 
@@ -150,6 +186,23 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       }
     }),
 
+    register('vscptt.forgetHostKey', async () => {
+      const known = hostKeys.known;
+      if (!known) {
+        ui.showInfo('還沒有記住任何 SSH 主機金鑰。');
+        return;
+      }
+      const answer = await vscode.window.showWarningMessage(
+        `要忘記已記住的 PTT SSH 主機金鑰（${known}）嗎？下次以 SSH 連線時會信任並記住當時的金鑰。`,
+        { modal: true },
+        FORGET
+      );
+      if (answer === FORGET) {
+        await hostKeys.forget();
+        ui.showInfo('已忘記 SSH 主機金鑰。');
+      }
+    }),
+
     register('vscptt.statusMenu', async () => {
       if (connection.state === 'connecting') {
         ui.showInfo('正在連線中…');
@@ -182,16 +235,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
     }),
 
     register('vscptt.openBoard', async () => {
-      const input = await vscode.window.showInputBox({
-        title: '開啟看板',
-        prompt: '輸入看板名稱',
-        placeHolder: '例如 Soft_Job',
-        validateInput: (v) =>
-          isValidBoardName(v.trim())
-            ? undefined
-            : '看板名稱只能用英文字母、數字、底線、句點和連字號',
-      });
-      const name = input?.trim();
+      const name = await askBoard('開啟看板', '輸入看板名稱');
       if (!name || !(await ensureLoggedIn())) {
         return;
       }
@@ -227,35 +271,30 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
             ? node.summary?.board
             : undefined;
       if (typeof board !== 'string' || !isValidBoardName(board)) {
-        const input = await vscode.window.showInputBox({
-          title: '搜尋看板',
-          prompt: '要搜尋哪個看板？輸入看板名稱',
-          placeHolder: '例如 Soft_Job',
-          validateInput: (v) =>
-            isValidBoardName(v.trim())
-              ? undefined
-              : '看板名稱只能用英文字母、數字、底線、句點和連字號',
-        });
-        board = input?.trim();
+        board = await askBoard('搜尋看板', '要搜尋哪個看板？輸入看板名稱');
       }
       if (!board) {
         return;
       }
       const query = await askQuery();
-      if (!query || !(await ensureLoggedIn())) {
+      if (query) {
+        await runSearch(board, query);
+      }
+    }),
+
+    register('vscptt.searchSameTitle', async (arg?: unknown) => {
+      const node = arg as Partial<TreeNode> | undefined;
+      const summary = toSummary(node?.kind === 'article' ? node.summary : arg);
+      const tab = summary ? undefined : articleTab(arg);
+      const ref = tab && refFromUri(tab);
+      const board = summary?.board ?? ref?.board;
+      const title = summary?.title ?? (tab && articles.shownAt(tab)?.article.title) ?? ref?.title;
+      const query = title === undefined ? undefined : threadQuery(title);
+      if (!board || !isValidBoardName(board) || !query) {
+        ui.showInfo('這篇文章的標題沒有可以搜尋的字。');
         return;
       }
-      const name = board;
-      await guarded(async () => {
-        const page = await busy(`正在搜尋 ${name}…`, () =>
-          connection.service.searchBoard(name, query)
-        );
-        if (page.articles.length === 0) {
-          ui.showInfo('沒有符合的文章。');
-          return;
-        }
-        tree.addSearch(page.board, query, page);
-      });
+      await runSearch(board, query);
     }),
 
     register('vscptt.removeSearch', (node?: unknown) => {
@@ -277,19 +316,80 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       if (!(await ensureLoggedIn())) {
         return;
       }
+      await guarded(() => busy('正在開啟文章…', () => showArticle(toRef(summary), summary.title)));
+    }),
+
+    register('vscptt.openArticleByAddress', async () => {
+      const input = await vscode.window.showInputBox({
+        title: '以文章代碼或網址開啟',
+        prompt: '貼上文章網址，或文章代碼（例如 #1gvg4mau (Soft_Job)）',
+        validateInput: (v) =>
+          parseArticleAddress(v) ? undefined : '請輸入 PTT 文章網址，或 8 碼的文章代碼',
+      });
+      const address = input === undefined ? undefined : parseArticleAddress(input);
+      if (!address) {
+        return;
+      }
+      const board = address.board ?? (await askBoard('文章在哪個看板？', '輸入看板名稱'));
+      if (!board || !(await ensureLoggedIn())) {
+        return;
+      }
       await guarded(() =>
-        busy('正在開啟文章…', async () => {
-          const doc = await vscode.workspace.openTextDocument(
-            articleUri(toRef(summary), summary.title)
-          );
-          await vscode.window.showTextDocument(doc, { preview: true });
+        busy('正在尋找文章…', async () => {
+          const summary = await connection.service.findArticle(board, address.id);
+          await showArticle({ ...toRef(summary), id: address.id }, summary.title);
         })
       );
     }),
 
+    register('vscptt.filterPushes', async (arg?: unknown) => {
+      const tab = articleTab(arg);
+      const shown = tab && articles.shownAt(tab);
+      if (!tab || !shown || shown.article.pushes.length === 0) {
+        ui.showInfo('這篇文章沒有推文。');
+        return;
+      }
+      const { article, firstPushLine } = shown;
+      const op = article.author.split(/\s/)[0];
+      const counts = new Map<string, number>();
+      for (const p of article.pushes) {
+        counts.set(p.userId, (counts.get(p.userId) ?? 0) + 1);
+      }
+      const users = [...counts].sort(
+        ([a, x], [b, y]) => Number(b === op) - Number(a === op) || y - x
+      );
+      const who = await vscode.window.showQuickPick(
+        users.map(([user, n]) => ({
+          label: user,
+          description: `${n} 則${user === op ? '・原 PO' : ''}`,
+        })),
+        { placeHolder: '只看誰的推文？' }
+      );
+      if (!who) {
+        return;
+      }
+      const items = article.pushes.flatMap((p, i) =>
+        p.userId === who.label
+          ? [
+              {
+                label: `${p.kind} ${p.content}`,
+                description: p.time ? `${p.date} ${p.time}` : p.date,
+                line: firstPushLine + i,
+              },
+            ]
+          : []
+      );
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: `${who.label} 的 ${items.length} 則推文，選一則跳過去`,
+      });
+      if (pick) {
+        await revealLine(tab, pick.line);
+      }
+    }),
+
     register('vscptt.refreshArticle', (uri?: unknown) => {
-      const target = uri instanceof vscode.Uri ? uri : vscode.window.activeTextEditor?.document.uri;
-      if (target?.scheme === ARTICLE_SCHEME) {
+      const target = articleTab(uri);
+      if (target) {
         articles.refresh(target);
       }
     }),
@@ -297,7 +397,36 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
     register('vscptt.copyArticleId', (arg?: unknown) => copyFromArticle(arg, 'aid')),
     register('vscptt.copyArticleUrl', (arg?: unknown) => copyFromArticle(arg, 'url')),
     register('vscptt.openArticleInBrowser', (arg?: unknown) => copyFromArticle(arg, 'open')),
+
+    // Not commands, but they belong with them: say when a re-read tab has new pushes, and forget closed tabs.
+    articles.onDidFindNewPushes(async ({ uri, added, line }) => {
+      if ((await vscode.window.showInformationMessage(`有 ${added} 則新推文。`, JUMP)) === JUMP) {
+        await guarded(() => revealLine(uri, line));
+      }
+    }),
+    vscode.workspace.onDidCloseTextDocument((doc) => articles.forget(doc.uri)),
   ];
+
+  async function showArticle(ref: ArticleRef, title: string): Promise<void> {
+    const doc = await vscode.workspace.openTextDocument(articleUri(ref, title));
+    await vscode.window.showTextDocument(doc, { preview: true });
+  }
+
+  async function runSearch(board: string, query: SearchQuery): Promise<void> {
+    if (!(await ensureLoggedIn())) {
+      return;
+    }
+    await guarded(async () => {
+      const page = await busy(`正在搜尋 ${board}…`, () =>
+        connection.service.searchBoard(board, query)
+      );
+      if (page.articles.length === 0) {
+        ui.showInfo('沒有符合的文章。');
+        return;
+      }
+      tree.addSearch(page.board, query, page);
+    });
+  }
 
   async function copyFromArticle(arg: unknown, what: 'aid' | 'url' | 'open'): Promise<void> {
     const node = arg as Partial<TreeNode> | undefined;

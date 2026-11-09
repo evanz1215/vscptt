@@ -2,11 +2,19 @@ import * as vscode from 'vscode';
 import { LoginFailedError, NotLoggedInError } from '../core/errors';
 import { PttService } from '../core/service';
 import { Session } from '../core/session/session';
+import { Terminal } from '../core/terminal/terminal';
 import type { Transport } from '../core/transport/transport';
+import { connectSsh } from '../core/transport/sshTransport';
 import { connectWs } from '../core/transport/wsTransport';
 import type { CredentialStore, SavedLogin } from './credentialStore';
+import type { HostKeyStore } from './hostKeys';
 import { describeError } from './errorMessages';
-import { type VscpttSettings, toServiceOptions, toSessionOptions } from './settings';
+import {
+  type TransportKind,
+  type VscpttSettings,
+  toServiceOptions,
+  toSessionOptions,
+} from './settings';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'ready';
 
@@ -29,7 +37,12 @@ export interface LoginUi {
 }
 
 export interface ConnectionDeps {
-  connect?: () => Promise<Transport>;
+  /** Replaces the real connection (tests). Gets the transport the settings ask for. */
+  connect?: (kind: TransportKind) => Promise<Transport>;
+  /** Decides whether to trust PTT's SSH host key. Without it, SSH connections are refused. */
+  hostKeys?: Pick<HostKeyStore, 'check'>;
+  /** Where SSH connects; only tests change it. */
+  sshTarget?: { host: string; port: number };
   ui: LoginUi;
   store: CredentialStore;
   settings: () => VscpttSettings;
@@ -140,6 +153,13 @@ export class ConnectionManager implements vscode.Disposable {
     }
   }
 
+  private open(kind: TransportKind): Promise<Transport> {
+    const keys = this.deps.hostKeys;
+    return kind === 'ssh'
+      ? connectSsh({ ...this.deps.sshTarget, verifyHostKey: (fp) => keys?.check(fp) ?? false })
+      : connectWs();
+  }
+
   private async doLogin(options: { useSaved?: boolean }): Promise<boolean> {
     const { ui, store, settings } = this.deps;
     const saved = await store.load();
@@ -156,19 +176,20 @@ export class ConnectionManager implements vscode.Disposable {
     }
 
     this.setState('connecting');
+    const current = settings();
     let transport: Transport;
     try {
-      transport = await (this.deps.connect ?? connectWs)();
+      transport = await (this.deps.connect ?? ((kind) => this.open(kind)))(current.transport);
     } catch (error) {
       this.setState('disconnected');
       ui.showError(describeError(error));
       return false;
     }
-    const current = settings();
-    const session = new Session(
-      transport,
-      toSessionOptions(current, () => ui.confirmKickOther())
-    );
+    const session = new Session(transport, {
+      ...toSessionOptions(current, () => ui.confirmKickOther()),
+      // SSH is UTF-8 from the first byte; the WebSocket gateway starts in Big5 (the Session default).
+      ...(current.transport === 'ssh' ? { terminal: new Terminal({ encoding: 'utf-8' }) } : {}),
+    });
     const service = new PttService(session, toServiceOptions(current));
 
     try {

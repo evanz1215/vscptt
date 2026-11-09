@@ -92,6 +92,13 @@ export class Range {
   ) {}
 }
 
+export class Selection extends Range {}
+
+export enum TextEditorRevealType {
+  Default = 0,
+  InCenter = 2,
+}
+
 export class Hover {
   constructor(
     readonly contents: MarkdownString,
@@ -157,6 +164,10 @@ interface MockState {
   hoverProviders: Array<{ scheme: string; provider: unknown }>;
   shownDocuments: string[];
   shownTexts: string[];
+  shownUris: Uri[];
+  /** Line each reveal put the cursor on. */
+  revealedLines: number[];
+  closeListeners: Set<Listener<{ uri: Uri }>>;
   openedDocuments: string[];
   statusItems: StatusBarItem[];
   treeViews: Array<{ id: string; provider: unknown; disposed: boolean }>;
@@ -204,6 +215,9 @@ const fresh = (): MockState => ({
   hoverProviders: [],
   shownDocuments: [],
   shownTexts: [],
+  shownUris: [],
+  revealedLines: [],
+  closeListeners: new Set(),
   openedDocuments: [],
   statusItems: [],
   treeViews: [],
@@ -242,7 +256,9 @@ export const window = {
   async showQuickPick(items: string[] | Array<{ label: string }>, _options?: unknown) {
     const labels = items.map((i) => (typeof i === 'string' ? i : i.label));
     mock.quickPickCalls.push(labels);
-    return mock.quickPickAnswers.shift();
+    const answer = mock.quickPickAnswers.shift();
+    // Answers are given as labels; an item list gets the item with that label back, as in VS Code.
+    return items.find((i) => typeof i !== 'string' && i.label === answer) ?? answer;
   },
   createOutputChannel(_name: string) {
     return { appendLine: (line: string) => void mock.outputLines.push(line), dispose() {} };
@@ -264,8 +280,13 @@ export const window = {
   },
   async showTextDocument(doc: { uri: Uri; getText?: () => string }, _options?: unknown) {
     mock.shownDocuments.push(doc.uri.toString());
+    mock.shownUris.push(doc.uri);
     mock.shownTexts.push(doc.getText?.() ?? '');
-    return { document: doc };
+    return {
+      document: doc,
+      selection: undefined as Selection | undefined,
+      revealRange: (range: Range) => void mock.revealedLines.push(range.startLine),
+    };
   },
   async withProgress<T>(_options: unknown, task: () => Promise<T>): Promise<T> {
     return task();
@@ -318,6 +339,10 @@ export const workspace = {
     mock.openedDocuments.push(uri.toString());
     const text = await provider.provideTextDocumentContent(uri);
     return { uri, getText: () => text };
+  },
+  onDidCloseTextDocument(listener: Listener<{ uri: Uri }>): Disposable {
+    mock.closeListeners.add(listener);
+    return new Disposable(() => mock.closeListeners.delete(listener));
   },
   onDidChangeConfiguration(
     listener: Listener<{ affectsConfiguration(section: string): boolean }>

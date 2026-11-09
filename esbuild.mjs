@@ -6,7 +6,8 @@ const options = {
   entryPoints: ['src/extension.ts'],
   bundle: true,
   outfile: 'out/extension.js',
-  external: ['vscode'],
+  // ssh2 loads these optional native parts inside try/catch and falls back to pure JS without them.
+  external: ['vscode', 'cpu-features', '*.node'],
   format: 'cjs',
   platform: 'node',
   target: 'node20',

@@ -2,9 +2,13 @@
   "name": "vscptt",
   "displayName": "vscptt",
   "description": "在 VS Code 裡瀏覽 PTT：看板、文章與推文（唯讀）",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "Evan",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/evanz1215/vscptt.git"
+  },
   "private": true,
   "engines": {
     "vscode": "^1.100.0"
@@ -77,6 +81,11 @@
         "category": "PTT"
       },
       {
+        "command": "vscptt.forgetHostKey",
+        "title": "忘記 SSH 主機金鑰",
+        "category": "PTT"
+      },
+      {
         "command": "vscptt.statusMenu",
         "title": "連線選項",
         "category": "PTT"
@@ -105,6 +114,11 @@
         "icon": "$(search)"
       },
       {
+        "command": "vscptt.searchSameTitle",
+        "title": "搜尋同標題文章",
+        "category": "PTT"
+      },
+      {
         "command": "vscptt.removeSearch",
         "title": "移除這組搜尋",
         "category": "PTT",
@@ -121,10 +135,21 @@
         "category": "PTT"
       },
       {
+        "command": "vscptt.openArticleByAddress",
+        "title": "以文章代碼或網址開啟…",
+        "category": "PTT"
+      },
+      {
         "command": "vscptt.refreshArticle",
         "title": "重新整理這篇文章",
         "category": "PTT",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "vscptt.filterPushes",
+        "title": "篩選推文…",
+        "category": "PTT",
+        "icon": "$(filter)"
       },
       {
         "command": "vscptt.copyArticleId",
@@ -171,6 +196,14 @@
         {
           "command": "vscptt.removeSearch",
           "when": "false"
+        },
+        {
+          "command": "vscptt.searchSameTitle",
+          "when": "resourceScheme == vscptt"
+        },
+        {
+          "command": "vscptt.filterPushes",
+          "when": "resourceScheme == vscptt"
         }
       ],
       "view/title": [
@@ -213,6 +246,11 @@
           "command": "vscptt.search",
           "when": "view == vscptt.boards && vscptt.loggedIn",
           "group": "navigation@2"
+        },
+        {
+          "command": "vscptt.openArticleByAddress",
+          "when": "view == vscptt.boards",
+          "group": "2_misc@0"
         }
       ],
       "view/item/context": [
@@ -245,6 +283,11 @@
           "command": "vscptt.removeSearch",
           "when": "view == vscptt.boards && viewItem == search",
           "group": "inline"
+        },
+        {
+          "command": "vscptt.searchSameTitle",
+          "when": "view == vscptt.boards && viewItem =~ /^article/",
+          "group": "0_search@0"
         }
       ],
       "editor/title": [
@@ -252,6 +295,16 @@
           "command": "vscptt.refreshArticle",
           "when": "resourceScheme == vscptt",
           "group": "navigation"
+        },
+        {
+          "command": "vscptt.filterPushes",
+          "when": "resourceScheme == vscptt",
+          "group": "navigation"
+        },
+        {
+          "command": "vscptt.searchSameTitle",
+          "when": "resourceScheme == vscptt",
+          "group": "1_ptt@1"
         }
       ]
     },
@@ -278,6 +331,20 @@
           "type": "boolean",
           "default": false,
           "description": "啟動時，如果已儲存密碼，就自動登入。",
+          "scope": "application"
+        },
+        "vscptt.connection.transport": {
+          "type": "string",
+          "enum": [
+            "websocket",
+            "ssh"
+          ],
+          "default": "websocket",
+          "enumDescriptions": [
+            "WebSocket（wss://ws.ptt.cc/bbs），和官方網頁版 term.ptt.cc 相同",
+            "SSH（ptt.cc 的 22 埠，訪客帳號 bbsu）。第一次連線會記住主機金鑰，之後金鑰不同就拒絕連線"
+          ],
+          "description": "連到 PTT 的方式。下次登入時生效。",
           "scope": "application"
         },
         "vscptt.connection.settleMs": {
@@ -359,11 +426,12 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "package": "vsce package",
+    "package": "vsce package --no-dependencies",
     "vscode:prepublish": "pnpm run build"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
+    "@types/ssh2": "^1.15.6",
     "@types/vscode": "1.100.0",
     "@types/ws": "^8.18.2",
     "@vscode/vsce": "^4.1.0",
@@ -375,6 +443,7 @@
   },
   "dependencies": {
     "@xterm/headless": "^6.0.0",
+    "ssh2": "^1.17.0",
     "ws": "^8.22.1"
   }
 }

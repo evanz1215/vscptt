@@ -7,7 +7,13 @@ function pushLine(p: Push): string {
   return `${p.kind} ${p.userId}: ${p.content}    ${when}`;
 }
 
-/** The text of the read-only document an article is shown in (docs/plan.md 6.3). */
+/** "推 3・噓 1・→ 2（共 6 則）" */
+function pushStats(pushes: Push[]): string {
+  const n = (kind: Push['kind']) => pushes.filter((p) => p.kind === kind).length;
+  return `推 ${n('推')}・噓 ${n('噓')}・→ ${n('→')}（共 ${pushes.length} 則）`;
+}
+
+/** The text of the read-only document an article is shown in (docs/plan.md 6.3). The pushes are always its last lines. */
 export function renderArticle(article: Article): string {
   const notices: string[] = [];
   if (article.pinnedMirror) {
@@ -26,6 +32,7 @@ export function renderArticle(article: Article): string {
     `看板：${article.board}`,
     `時間：${article.time}`,
     `網址：${article.url ?? ''}`,
+    ...(article.pushes.length > 0 ? [`推文：${pushStats(article.pushes)}`] : []),
     ...notices,
     RULE,
     ...article.bodyLines,

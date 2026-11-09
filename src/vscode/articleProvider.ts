@@ -92,12 +92,30 @@ export function refFromUri(uri: vscode.Uri): ArticleRef | undefined {
   };
 }
 
+/** An article as its tab shows it now. */
+export interface ShownArticle {
+  article: Article;
+  /** 0-based line of the first push in the tab (the pushes are its last lines). */
+  firstPushLine: number;
+}
+
+/** A tab was read again and has more pushes than before. */
+export interface NewPushes {
+  uri: vscode.Uri;
+  added: number;
+  /** 0-based line of the first new push. */
+  line: number;
+}
+
 /** Provides the text of article documents. A failure becomes the document's text, so a tab is never blank. */
 export class ArticleContentProvider
   implements vscode.TextDocumentContentProvider, vscode.Disposable
 {
   private readonly changed = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChange = this.changed.event;
+  private readonly morePushes = new vscode.EventEmitter<NewPushes>();
+  readonly onDidFindNewPushes = this.morePushes.event;
+  private readonly shown = new Map<string, ShownArticle>();
 
   constructor(
     private readonly source: () => ArticleSource,
@@ -110,12 +128,36 @@ export class ArticleContentProvider
       return renderArticleError('這個網址不是 vscptt 產生的文章位址。');
     }
     try {
-      return renderArticle(await this.source().getArticle(ref));
+      const article = await this.source().getArticle(ref);
+      const text = renderArticle(article);
+      const key = uri.toString();
+      const before = this.shown.get(key)?.article.pushes.length;
+      const firstPushLine = text.split('\n').length - 1 - article.pushes.length;
+      this.shown.set(key, { article, firstPushLine });
+      if (before !== undefined && article.pushes.length > before) {
+        // shortcut: counts pushes, so one removed and one added in between reads as nothing new; fine for a reader.
+        this.morePushes.fire({
+          uri,
+          added: article.pushes.length - before,
+          line: firstPushLine + before,
+        });
+      }
+      return text;
     } catch (error) {
       const message = describeError(error);
       this.onError(message);
       return renderArticleError(message);
     }
+  }
+
+  /** The article an open tab shows, once it has been read. */
+  shownAt(uri: vscode.Uri): ShownArticle | undefined {
+    return this.shown.get(uri.toString());
+  }
+
+  /** The tab was closed: nothing to compare its next reading with. */
+  forget(uri: vscode.Uri): void {
+    this.shown.delete(uri.toString());
   }
 
   /** Forget the cached copy of the article behind `uri` and make the editor read it again. */
@@ -133,5 +175,6 @@ export class ArticleContentProvider
 
   dispose(): void {
     this.changed.dispose();
+    this.morePushes.dispose();
   }
 }

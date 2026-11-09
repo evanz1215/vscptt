@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { aidFromId } from '../../src/core/aid';
 import {
   ArticleDeletedError,
   ArticleMismatchError,
+  ArticleNotFoundError,
   ConnectionClosedError,
   InvalidArgumentError,
   NotLoggedInError,
 } from '../../src/core/errors';
 import { Keys } from '../../src/core/keys';
 import type { BoardPage } from '../../src/core/models';
+import { WaitTimeoutError } from '../../src/core/queue/waitFor';
 import { PttService, type PttServiceOptions } from '../../src/core/service';
 import { Session } from '../../src/core/session/session';
 import { FOLDER, FakeBbs, LINE, type FakeArticle, type FakeBbsOptions } from '../fakes/fakeBbs';
@@ -46,7 +49,7 @@ async function setup(
   const session = new Session(transport, { keepAliveMs: 0 });
   let nowMs = 0;
   const service = new PttService(session, {
-    boardEnterTimeoutMs: 150,
+    boardEnterTimeoutMs: 1000,
     now: () => nowMs,
     ...options.service,
   });
@@ -234,6 +237,17 @@ describe('getBoardPage', () => {
     await expect(service.getBoardPage('Nope')).rejects.toMatchObject({ code: 'boardNotFound' });
     expect((await service.getBoardPage('Dev')).articles).toHaveLength(3); // and recovers
   });
+
+  it('reports an unknown entry screen as a timeout with its snapshot, not as a missing board', async () => {
+    const { service } = await setup(
+      { Dev: board(3), Odd: board(2) },
+      { bbs: { oddWelcome: ['Odd'] } }
+    );
+    const error = await service.getBoardPage('Odd').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(WaitTimeoutError);
+    expect((error as WaitTimeoutError).snapshot.join('\n')).toContain('瀏覽 第 1/2 頁');
+    expect((await service.getBoardPage('Dev')).articles).toHaveLength(3); // and recovers
+  });
 });
 
 describe('getArticle', () => {
@@ -294,7 +308,7 @@ describe('getArticle', () => {
       truncated: false,
       url: 'https://www.ptt.cc/bbs/Dev/M.1007.A.007.html',
     });
-    expect(a.aid).toMatch(/^#1/);
+    expect(a.aid).toBe(aidFromId('M.1007.A.007'));
     expect(a.bodyLines.slice(0, 2)).toEqual(['body of 7', 'second line']);
     expect(a.pushes).toEqual([
       { kind: '推', userId: 'bob', content: 'hi 7', date: '11/01', time: '12:00' },
@@ -502,7 +516,7 @@ describe('resolveArticleId', () => {
       id: 'M.1004.A.004',
       url: 'https://www.ptt.cc/bbs/Dev/M.1004.A.004.html',
     });
-    expect(normal.aid).toMatch(/^#1/);
+    expect(normal.aid).toBe(aidFromId('M.1004.A.004'));
 
     const pinned = await service.resolveArticleId({ board: 'Dev', isPinned: true, pinnedIndex: 0 });
     expect(pinned.id).toBe(article(9000).id);
@@ -514,6 +528,86 @@ describe('resolveArticleId', () => {
     const b = await service.resolveArticleId({ board: 'Dev', listNumber: 4 });
     expect(b).toEqual(a);
     expect((await service.getBoardPage('Dev')).articles).toHaveLength(10);
+  });
+});
+
+describe('screens that arrive in pieces (SSH, found live 2026-11-05)', () => {
+  it('pages back without mistaking a half-drawn list for the next page', async () => {
+    const { service } = await setup(
+      { Dev: board(60) },
+      { bbs: { splitFrames: true }, service: { boardEnterTimeoutMs: 5000 } }
+    );
+    const latest = await service.getBoardPage('Dev');
+    const older = await service.getBoardPage('Dev', latest.next);
+    expect(older.articles[0]!.listNumber).toBe(latest.next!.before - 1);
+    expect(older.articles.map((a) => a.listNumber)).toEqual(
+      Array.from({ length: older.articles.length }, (_, i) => latest.next!.before - 1 - i)
+    );
+  });
+
+  it('reads articles, searches and code jumps the same way', async () => {
+    const { service } = await setup(
+      { Dev: board(60) },
+      { bbs: { splitFrames: true }, service: { boardEnterTimeoutMs: 5000 } }
+    );
+    const a = await service.getArticle({ board: 'Dev', listNumber: 12 });
+    expect(a.id).toBe(article(12).id);
+    const hits = await service.searchBoard('Dev', { kind: 'title', text: '第3' });
+    expect(hits.articles.length).toBeGreaterThan(0);
+    expect((await service.findArticle('Dev', article(40).id)).listNumber).toBe(40);
+  });
+});
+
+describe('findArticle', () => {
+  it('jumps to the code and returns the entry, which then opens as that article', async () => {
+    const { bbs, service } = await setup({ Dev: board(60) });
+    const id = article(7).id;
+    const found = await service.findArticle('Dev', id);
+    expect(found).toMatchObject({
+      board: 'Dev',
+      listNumber: 7,
+      title: '[測試] 第7篇',
+      isPinned: false,
+    });
+    expect(bbs.aidSearches).toEqual([aidFromId(id)!.slice(1)]);
+    const a = await service.getArticle({ ...found, id });
+    expect(a.id).toBe(id);
+  });
+
+  it('says not found when the board has no such code, and leaves the list usable', async () => {
+    const { service } = await setup({ Dev: board(10) });
+    await expect(service.findArticle('Dev', 'M.5.A.123')).rejects.toBeInstanceOf(
+      ArticleNotFoundError
+    );
+    expect((await service.getBoardPage('Dev')).articles).toHaveLength(10);
+  });
+
+  it('says deleted, without asking for the code box, when the code leads to a deleted entry', async () => {
+    const articles = board(10);
+    articles[4] = { ...articles[4]!, kind: 'deleted' };
+    const { service, transport } = await setup({ Dev: articles });
+    await expect(service.findArticle('Dev', articles[4]!.id)).rejects.toBeInstanceOf(
+      ArticleDeletedError
+    );
+    expect(count(transport, 'Q')).toBe(0);
+    expect((await service.getBoardPage('Dev')).articles).toHaveLength(10);
+  });
+
+  it('says not found when the cursor did not move to the code, even with no notice', async () => {
+    const { service } = await setup({ Dev: board(10) }, { bbs: { aidJumpIgnored: true } });
+    // The cursor stays on the newest entry, which is another article: the code box tells them apart.
+    await expect(service.findArticle('Dev', article(3).id)).rejects.toBeInstanceOf(
+      ArticleNotFoundError
+    );
+    expect((await service.getBoardPage('Dev')).articles).toHaveLength(10);
+  });
+
+  it('refuses an id it cannot turn into a code, before typing anything', async () => {
+    const { bbs, service } = await setup({ Dev: board(3) });
+    await expect(service.findArticle('Dev', 'M.1.A.1;s')).rejects.toBeInstanceOf(
+      InvalidArgumentError
+    );
+    expect(bbs.aidSearches).toEqual([]);
   });
 });
 

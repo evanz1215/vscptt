@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ArticleMismatchError,
+  ArticleNotFoundError,
   BoardNotFoundError,
   ConnectionClosedError,
   DuplicateLoginDeclinedError,
@@ -11,6 +12,7 @@ import {
   UnexpectedScreenError,
 } from '../../src/core/errors';
 import { WaitTimeoutError } from '../../src/core/queue/waitFor';
+import { SshConnectError } from '../../src/core/transport/sshTransport';
 import { describeError } from '../../src/vscode/errorMessages';
 
 describe('describeError', () => {
@@ -22,7 +24,14 @@ describe('describeError', () => {
     ['connection closed', new ConnectionClosedError(), '連線已中斷'],
     ['board not found', new BoardNotFoundError('Dev'), '找不到看板「Dev」'],
     ['article mismatch', new ArticleMismatchError('whatever'), '清單已經變動'],
+    ['article not found', new ArticleNotFoundError(), '找不到這篇文章'],
     ['not logged in', new NotLoggedInError(), '尚未登入'],
+    [
+      'ssh host key refused',
+      new SshConnectError('x', 'SHA256:abc'),
+      '主機金鑰（SHA256:abc）和上次記住的不同',
+    ],
+    ['ssh unreachable', new SshConnectError('x'), '22 埠'],
     ['timeout', new WaitTimeoutError('the article text', 10, []), '逾時（等待：the article text）'],
   ];
   it.each(cases)('%s', (_name, error, expected) => {

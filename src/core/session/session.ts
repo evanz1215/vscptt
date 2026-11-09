@@ -30,7 +30,10 @@ export interface Credentials {
 export type DuplicateSessionPolicy = 'ask' | 'kick' | 'keep';
 
 export interface SessionOptions {
-  /** Defaults to a Big5 terminal: the gateway starts in Big5 and the login switches it to UTF-8. */
+  /**
+   * Defaults to a Big5 terminal: the WebSocket gateway starts in Big5 and the login switches it to UTF-8. Pass a
+   * UTF-8 terminal for SSH, which is UTF-8 from the start; the login then leaves out the switching comma.
+   */
   terminal?: Terminal;
   /** Quiet time that counts as "the server finished drawing". */
   settleMs?: number;

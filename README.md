@@ -1,6 +1,6 @@
 # vscptt
 
-在 VS Code 內瀏覽 PTT（唯讀）：登入、我的最愛、以名稱開啟看板、文章列表、閱讀文章。連線使用 WebSocket（`wss://ws.ptt.cc/bbs`），畫面以終端機模擬後解析。
+在 VS Code 內瀏覽 PTT（唯讀）：登入、我的最愛、以名稱開啟看板、文章列表、閱讀文章。連線可選 WebSocket（`wss://ws.ptt.cc/bbs`，預設）或 SSH（`ptt.cc` 的 22 埠），畫面以終端機模擬後解析。
 
 > **免責聲明**：這是非官方、個人製作的 PTT 瀏覽工具，與 PTT 或批踢踢實業坊沒有關係，也未經其授權或認可。它只有唯讀功能（不會發文、推文、寄信或刪除），但仍會用你的帳號登入真實的 PTT；使用時請遵守 PTT 的站規與服務條款。作者不對帳號被停權、資料遺失或任何其他損失負責，風險由使用者自行承擔。
 
@@ -10,7 +10,8 @@
 - 密碼不會寫進設定檔、記錄、輸出面板或錯誤訊息。畫面快照寫入輸出面板前，已遮蔽 IP 位址與帳號。
 - 「PTT: 清除已儲存的帳密」可隨時刪除已儲存的資料。
 - 公用電腦請選「都不記住」。
-- 連線只會到 `wss://ws.ptt.cc/bbs`。唯一的例外是圖片預覽：滑鼠停在圖片連結上時，VS Code 會直接向該圖片網站下載圖片，對方會看到你的網路位址（可用 `vscptt.preview.images` 關閉）。
+- SSH：第一次連線會記住 PTT 的主機金鑰並告訴你指紋；之後金鑰不同就拒絕連線（可能是站方換金鑰，也可能有人攔截）。確認是站方更換後，執行「PTT: 忘記 SSH 主機金鑰」再連線。
+- 連線只會到 `wss://ws.ptt.cc/bbs`，或選了 SSH 時的 `ptt.cc` 22 埠（訪客帳號 `bbsu`，不需密碼；你的 PTT 帳密是登入 BBS 時才輸入）。唯一的例外是圖片預覽：滑鼠停在圖片連結上時，VS Code 會直接向該圖片網站下載圖片，對方會看到你的網路位址（可用 `vscptt.preview.images` 關閉）。
 
 ## 使用
 
@@ -18,7 +19,10 @@
 2. 輸入帳號與密碼，並選擇是否記住。密碼只存放在 VS Code 的 SecretStorage，且只有選「記住帳號和密碼」才會儲存；帳號存在 globalState。
 3. 在「看板」檢視可展開「我的最愛」與「已開啟的看板」；「PTT: 開啟看板…」可用名稱開啟任何看板。
 4. 點文章開啟唯讀文件；右鍵可複製文章代碼或網址，或在瀏覽器開啟。
-5. 搜尋：點看板旁的放大鏡（或「PTT: 搜尋看板…」），選標題關鍵字、作者或推文數（負數搜噓文數），結果會出現在「搜尋結果」群組，可載入更多、開文章、移除；登出時清除。
+5. 「PTT: 以文章代碼或網址開啟…」：貼上文章網址、`#AID (看板)` 或只有 `#AID`（會再問看板）就直接開文章。
+6. 文章分頁：開頭有推、噓、→ 的統計；「篩選推文…」（分頁右上的漏斗）可只看某個人的推文並跳過去，原 PO 排第一；按「重新整理這篇文章」後，有新推文會提示，並可跳到第一則新推文。
+7. 「搜尋同標題文章」（文章右鍵，或文章分頁的 … 選單）：去掉 `Re:`／`Fw:` 後用標題搜尋同一串。
+8. 搜尋：點看板旁的放大鏡（或「PTT: 搜尋看板…」），選標題關鍵字、作者或推文數（負數搜噓文數），結果會出現在「搜尋結果」群組，可載入更多、開文章、移除；登出時清除。
 
 帳號在別處已登入時，只有你在對話框明確按「登出對方並登入」才會踢掉對方；預設保留對方連線。沒有自動重連，中斷後請用「PTT: 重新連線」。
 
@@ -27,6 +31,7 @@
 | 設定                                                                                          | 預設            | 說明                                                                                              |
 | --------------------------------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------- |
 | `vscptt.login.duplicateSession`                                                               | `ask`           | 重複登入時詢問或固定處理                                                                          |
+| `vscptt.connection.transport`                                                                 | `websocket`     | 連線方式：`websocket` 或 `ssh`（有些網路會擋 22 埠）                                              |
 | `vscptt.login.autoLogin`                                                                      | `false`         | 啟動時用已記住的帳密自動登入                                                                      |
 | `vscptt.connection.settleMs`                                                                  | 見 package.json | 畫面穩定等待毫秒                                                                                  |
 | `vscptt.connection.stepTimeoutMs`                                                             | 見 package.json | 單一步驟逾時                                                                                      |
@@ -72,13 +77,7 @@ $env:PTT_LIVE='1'; $env:PTT_USER='<id>'; $env:PTT_PASS='<password>'; pnpm exec v
 pnpm run package     # produces a .vsix
 ```
 
-`.vsix` 只包含 `package.json`、`README.md`、`LICENSE`、`media/ptt.svg`、`syntaxes/ptt.tmLanguage.json`、`out/extension.js`（由測試確認）。程式已用 esbuild 打成單一檔案，pnpm 與 vsce 的依賴檢查不相容，所以要加 `--no-dependencies`：
-
-```bash
-pnpm exec vsce package --no-dependencies
-```
-
-`package.json` 還沒有 `repository` 欄位，vsce 會警告；公開前請補上，或加 `--allow-missing-repository`。
+`.vsix` 只包含 `package.json`、`README.md`、`LICENSE`、`media/ptt.svg`、`syntaxes/ptt.tmLanguage.json`、`out/extension.js`（由測試確認）。程式已用 esbuild 打成單一檔案，pnpm 與 vsce 的依賴檢查不相容，所以 `package` 指令已帶 `--no-dependencies`。
 
 ## 已知限制
 

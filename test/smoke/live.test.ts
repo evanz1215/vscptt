@@ -2,15 +2,23 @@ import { describe, expect, it } from 'vitest';
 import { DuplicateLoginDeclinedError } from '../../src/core/errors';
 import { PttService } from '../../src/core/service';
 import { Session } from '../../src/core/session/session';
+import { Terminal } from '../../src/core/terminal/terminal';
+import { connectSsh } from '../../src/core/transport/sshTransport';
 import { connectWs } from '../../src/core/transport/wsTransport';
 
 // Opt-in: talks to the real PTT and logs in with a real account. Never runs in CI or a plain `pnpm test`.
 //   PTT_LIVE=1 PTT_USER=<id> PTT_PASS=<password> pnpm exec vitest run test/smoke
+// Add PTT_TRANSPORT=ssh to go over SSH instead of WebSocket.
 // Read-only. A duplicate-login prompt is always answered "keep" so no other connection is logged out. PTT then
 // closes this connection, which is a property of the account's state, not a failure of the code: the test is
 // skipped with a reason instead of passing or failing.
 const live = process.env.PTT_LIVE === '1' && !!process.env.PTT_USER && !!process.env.PTT_PASS;
 const BOARD = process.env.PTT_BOARD ?? 'Soft_Job';
+// PTT_TRANSPORT=ssh runs the same test over SSH. The host key must be the one recorded in docs/plan.md 2.1
+// (seen again on 2026-11-05); PTT_SSH_FINGERPRINT overrides it if PTT changes its key.
+const SSH = process.env.PTT_TRANSPORT === 'ssh';
+const FINGERPRINT =
+  process.env.PTT_SSH_FINGERPRINT ?? 'SHA256:oTf7wY7klc9gi0FHhYQNHQu7aJfYGz/bFLSpdOxhbxg';
 
 describe.skipIf(!live)('live PTT smoke test', () => {
   it(
@@ -20,7 +28,12 @@ describe.skipIf(!live)('live PTT smoke test', () => {
       const user = process.env.PTT_USER!;
       const pass = process.env.PTT_PASS!;
 
-      const session = new Session(await connectWs(), { duplicateSession: 'keep' });
+      const session = SSH
+        ? new Session(await connectSsh({ verifyHostKey: (fp) => fp === FINGERPRINT }), {
+            duplicateSession: 'keep',
+            terminal: new Terminal({ encoding: 'utf-8' }),
+          })
+        : new Session(await connectWs(), { duplicateSession: 'keep' });
       const service = new PttService(session);
 
       try {
@@ -81,6 +94,10 @@ describe.skipIf(!live)('live PTT smoke test', () => {
         expect(read.bodyLines.length).toBeGreaterThan(0);
         expect(read.truncated).toBe(false);
 
+        // the same article found again by its id (`#` and the article code)
+        const found = await service.findArticle(BOARD, resolved.id);
+        expect(found.listNumber).toBe(target.listNumber);
+
         // a pinned article, if the board has one
         if (latest.pinned.length > 0) {
           const pinned = await service.getArticle({
@@ -104,7 +121,10 @@ describe.skipIf(!live)('live PTT smoke test', () => {
       }
 
       expect(session.state).toBe('disconnected');
-      expect(await session.closed).toMatchObject({ code: 1000 });
+      // WebSocket ends with code 1000; SSH has no codes and reports that the shell closed.
+      expect(await session.closed).toMatchObject(
+        SSH ? { reason: 'bbs disconnected' } : { code: 1000 }
+      );
     }
   );
 });

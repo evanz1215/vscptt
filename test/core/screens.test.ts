@@ -85,6 +85,14 @@ describe('board list', () => {
     expect(jumped.rows.some((r) => r.isPinned)).toBe(false);
   });
 
+  it('reads the short header PTT draws when the moderators and banner are long (LoL, live 2026-11-09)', () => {
+    const short = screen('board_list_entry');
+    short[0] = '【板主:samhou6/cornsoup/rainnawi..】[LoL] 13年魔咒解除 BLG戰勝世界賽T1';
+    expect(parseBoardList(short)?.board).toBe('LoL');
+    short[0] = '【板主:samhou6/cornsoup/rainnawi..】 13年魔咒解除 [LoL]'; // brackets in the banner only
+    expect(isBoardList(short)).toBe(false);
+  });
+
   it('returns null for other screens', () => {
     expect(parseBoardList(screen('favorites'))).toBeNull();
     expect(parseBoardList(screen('article_normal_p1'))).toBeNull();

@@ -79,6 +79,27 @@ export function normalizeSearch(query: SearchQuery): SearchQuery {
     : { kind: query.kind, text: input.text };
 }
 
+/**
+ * The title search for the thread an article belongs to: its title without "Re:" / "Fw:", cut to what the
+ * prompt takes (a title search matches any part, so a cut title still finds the thread). Undefined when
+ * nothing searchable is left.
+ */
+export function threadQuery(title: string): SearchQuery | undefined {
+  const text = title.replace(/^\s*(?:(?:re|fw)\s*:\s*)+/i, '').trim();
+  let out = '';
+  for (const ch of text) {
+    if ([...out].length >= MAX_TITLE_LENGTH || Buffer.byteLength(out + ch) > MAX_TITLE_BYTES) {
+      break;
+    }
+    out += ch;
+  }
+  try {
+    return normalizeSearch({ kind: 'title', text: out });
+  } catch {
+    return undefined;
+  }
+}
+
 /** A short label, e.g. for a tree node. */
 export function describeSearch(query: SearchQuery): string {
   switch (query.kind) {

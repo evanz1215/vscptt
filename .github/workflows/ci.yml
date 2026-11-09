@@ -25,8 +25,9 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run format:check
       # No PTT_LIVE here: the tests never touch the network and never see a password.
+      - run: pnpm run build # the packaging test lists out/extension.js
       - run: pnpm run test
-      - run: pnpm exec vsce package --no-dependencies --allow-missing-repository
+      - run: pnpm exec vsce package --no-dependencies
       - uses: actions/upload-artifact@v4
         with:
           name: vscptt-vsix

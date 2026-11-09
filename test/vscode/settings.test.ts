@@ -19,6 +19,7 @@ describe('readSettings', () => {
       from({
         'login.duplicateSession': 'keep',
         'login.autoLogin': true,
+        'connection.transport': 'ssh',
         'connection.settleMs': 120,
         'connection.stepTimeoutMs': 8000,
         'connection.keepAliveSeconds': 45,
@@ -32,6 +33,7 @@ describe('readSettings', () => {
       })
     );
     expect(s).toEqual({
+      transport: 'ssh',
       duplicateSession: 'keep',
       autoLogin: true,
       settleMs: 120,
@@ -54,6 +56,7 @@ describe('readSettings', () => {
       from({
         'login.duplicateSession': 'always',
         'login.autoLogin': 'yes',
+        'connection.transport': 'telnet',
         'connection.settleMs': 'fast',
         'connection.stepTimeoutMs': Number.NaN,
         'cache.articleSeconds': null,
@@ -134,5 +137,7 @@ describe('settings that decide whether another connection is logged out', () => 
       .properties as Record<string, { scope?: string }>;
     expect(props['vscptt.login.duplicateSession']!.scope).toBe('application');
     expect(props['vscptt.login.autoLogin']!.scope).toBe('application');
+    // A cloned repository must not be able to switch the connection to SSH and get a host key trusted.
+    expect(props['vscptt.connection.transport']!.scope).toBe('application');
   });
 });

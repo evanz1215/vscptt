@@ -6,6 +6,7 @@ import {
   ARTICLE_SCHEME,
   ArticleContentProvider,
   type ArticleSource,
+  type NewPushes,
   articleUri,
   refFromUri,
 } from '../../src/vscode/articleProvider';
@@ -208,5 +209,73 @@ describe('ArticleContentProvider', () => {
     provider.onDidChange((u) => changed.push(u.toString()));
     expect(() => provider.refresh(uri)).not.toThrow();
     expect(changed).toHaveLength(1);
+  });
+});
+
+describe('new pushes', () => {
+  const push = (content: string) => ({
+    kind: '推' as const,
+    userId: 'bob',
+    content,
+    date: '11/01',
+  });
+
+  class GrowingSource extends FakeSource {
+    pushes = [push('a')];
+    override async getArticle(ref: ArticleRef): Promise<Article> {
+      await super.getArticle(ref);
+      return { ...article(), pushes: [...this.pushes] };
+    }
+  }
+
+  const setup = () => {
+    const source = new GrowingSource();
+    const provider = new ArticleContentProvider(() => source);
+    const found: NewPushes[] = [];
+    provider.onDidFindNewPushes((e) => void found.push(e));
+    const uri = articleUri({ board: 'Dev', listNumber: 1 }, 'x');
+    return { source, provider, found, uri };
+  };
+
+  it('says nothing the first time an article is shown', async () => {
+    const { provider, found, uri } = setup();
+    await provider.provideTextDocumentContent(uri);
+    expect(found).toEqual([]);
+  });
+
+  it('says nothing when a re-read has the same pushes, or fewer', async () => {
+    const { source, provider, found, uri } = setup();
+    await provider.provideTextDocumentContent(uri);
+    await provider.provideTextDocumentContent(uri);
+    source.pushes = [];
+    await provider.provideTextDocumentContent(uri);
+    expect(found).toEqual([]);
+  });
+
+  it('points at the first new push when there are more', async () => {
+    const { source, provider, found, uri } = setup();
+    await provider.provideTextDocumentContent(uri);
+    source.pushes.push(push('b'), push('c'));
+    const text = await provider.provideTextDocumentContent(uri);
+    expect(found).toHaveLength(1);
+    expect(found[0]!.added).toBe(2);
+    expect(text.split('\n')[found[0]!.line]).toMatch(/^推 bob: b/);
+  });
+
+  it('forgets a closed tab, so opening it again is a first showing', async () => {
+    const { source, provider, found, uri } = setup();
+    await provider.provideTextDocumentContent(uri);
+    provider.forget(uri);
+    expect(provider.shownAt(uri)).toBeUndefined();
+    source.pushes.push(push('b'));
+    await provider.provideTextDocumentContent(uri);
+    expect(found).toEqual([]);
+  });
+
+  it('remembers nothing for a tab that failed to load', async () => {
+    const { source, provider, uri } = setup();
+    source.fail = new ConnectionClosedError();
+    await provider.provideTextDocumentContent(uri);
+    expect(provider.shownAt(uri)).toBeUndefined();
   });
 });

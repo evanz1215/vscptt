@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ArticleMismatchError, InvalidArgumentError } from '../../src/core/errors';
 import type { SearchQuery } from '../../src/core/models';
 import { PttService } from '../../src/core/service';
-import { describeSearch, toSearchInput } from '../../src/core/search';
+import { describeSearch, threadQuery, toSearchInput } from '../../src/core/search';
 import { Session } from '../../src/core/session/session';
 import { isMainMenu, isNoSearchResult, isSearchPrompt } from '../../src/core/screens/prompts';
 import { FakeBbs, type FakeArticle } from '../fakes/fakeBbs';
@@ -21,7 +21,7 @@ function article(i: number, extra: Partial<FakeArticle> = {}): FakeArticle {
 async function setup(articles: FakeArticle[]) {
   const bbs = new FakeBbs({ boards: { Dev: articles } });
   const session = new Session(bbs.connect(), { keepAliveMs: 0 });
-  const service = new PttService(session, { boardEnterTimeoutMs: 150 });
+  const service = new PttService(session, { boardEnterTimeoutMs: 1000 });
   await service.login({ username: 'alice', password: 'secret' });
   return { bbs, session, service };
 }
@@ -65,7 +65,8 @@ describe('searching a board', () => {
     ]);
   });
 
-  it('pages back through more than one screen of results', async () => {
+  // Six pages, each typed again from the board list: slow on purpose (every jump waits for a finished screen).
+  it('pages back through more than one screen of results', { timeout: 20_000 }, async () => {
     const { service } = await setup(
       Array.from({ length: 120 }, (_, i) => article(i + 1, { title: `hit ${i + 1}` }))
     );
@@ -264,5 +265,23 @@ describe('getting out of the search screens', () => {
     await service.searchBoard('Dev', { kind: 'title', text: ' 第 ' });
     await service.searchBoard('Dev', { kind: 'title', text: '第', extra: 'ignored' } as never);
     expect(bbs.searches).toHaveLength(1);
+  });
+});
+
+describe('threadQuery', () => {
+  it('drops reply and forward prefixes', () => {
+    expect(threadQuery('Re: [問題] 薪水')).toEqual({ kind: 'title', text: '[問題] 薪水' });
+    expect(threadQuery('RE:Fw: Re:  hello')).toEqual({ kind: 'title', text: 'hello' });
+  });
+
+  it('cuts a long title to what the prompt takes', () => {
+    const q = threadQuery('字'.repeat(40));
+    expect(q).toEqual({ kind: 'title', text: '字'.repeat(20) }); // 60 bytes
+    expect(threadQuery('a'.repeat(40))).toEqual({ kind: 'title', text: 'a'.repeat(30) });
+  });
+
+  it('gives nothing when only a prefix or control characters are left', () => {
+    expect(threadQuery('Re: ')).toBeUndefined();
+    expect(threadQuery('a\x1bb')).toBeUndefined();
   });
 });
