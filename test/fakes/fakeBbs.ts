@@ -46,6 +46,8 @@ export interface FakeBbsOptions {
   aidJumpIgnored?: boolean;
   /** Send each screen in pieces a little apart, as SSH does (seen live 2026-11-05). */
   splitFrames?: boolean;
+  /** Boards whose entry screen has a footer the client does not know (no 任意鍵). */
+  oddWelcome?: string[];
 }
 
 type Mode =
@@ -191,6 +193,7 @@ export class FakeBbs {
       autocomplete: options.autocomplete ?? {},
       aidJumpIgnored: options.aidJumpIgnored ?? false,
       splitFrames: options.splitFrames ?? false,
+      oddWelcome: options.oddWelcome ?? [],
     };
     for (const articles of Object.values(this.options.boards)) {
       FakeBbs.renumber(articles);
@@ -758,7 +761,12 @@ export class FakeBbs {
       case 'select':
         return this.screen(['【 選擇看板 】', `請輸入看板名稱(按空白鍵自動搜尋): ${this.buffer}`]);
       case 'boardWelcome':
-        return this.screen([...Array(23).fill(''), ' ▄ ▄ ▄  請按任意鍵繼續 ▄ ▄ ▄']);
+        return this.screen([
+          ...Array(23).fill(''),
+          this.options.oddWelcome.includes(this.currentBoard!)
+            ? '  瀏覽 第 1/2 頁 (50%)  目前顯示: 第 01~23 行'
+            : ' ▄ ▄ ▄  請按任意鍵繼續 ▄ ▄ ▄',
+        ]);
       case 'list':
         return this.screen(this.listRows());
       case 'searchPrompt': {

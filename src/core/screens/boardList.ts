@@ -30,15 +30,21 @@ export interface BoardListScreen {
  */
 export type ListMode = 'normal' | 'search';
 
+// When the moderators and the board banner do not fit, PTT shortens the name to `【板主:…】[LoL] banner`
+// (seen live on LoL, 2026-11-09); the footer still tells the two modes apart.
+const SHORT = /】\[([\w-]+)\]/;
 const HEADER: Record<ListMode, RegExp> = {
   normal: /看板《([^》]+)》/,
   search: /系列《([^》]+)》/,
 };
+const boardIn = (line: string, mode: ListMode): string | undefined =>
+  (HEADER[mode].exec(line) ?? SHORT.exec(line))?.[1];
 const FOOTER: Record<ListMode, string> = { normal: '文章列表', search: '系列文章' };
 
 export function isBoardList(lines: Lines, mode: ListMode = 'normal'): boolean {
   return (
-    HEADER[mode].test(lines[0] ?? '') && (lines[23] ?? '').trimStart().startsWith(FOOTER[mode])
+    boardIn(lines[0] ?? '', mode) !== undefined &&
+    (lines[23] ?? '').trimStart().startsWith(FOOTER[mode])
   );
 }
 
@@ -89,7 +95,7 @@ export function parseBoardList(lines: Lines, mode: ListMode = 'normal'): BoardLi
   if (!isBoardList(lines, mode)) {
     return null;
   }
-  const board = HEADER[mode].exec(lines[0]!)![1]!;
+  const board = boardIn(lines[0]!, mode)!;
   const rows: ListRow[] = [];
   for (let r = 3; r <= 22; r++) {
     const line = lines[r] ?? '';

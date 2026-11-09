@@ -10,6 +10,7 @@ import {
 } from '../../src/core/errors';
 import { Keys } from '../../src/core/keys';
 import type { BoardPage } from '../../src/core/models';
+import { WaitTimeoutError } from '../../src/core/queue/waitFor';
 import { PttService, type PttServiceOptions } from '../../src/core/service';
 import { Session } from '../../src/core/session/session';
 import { FOLDER, FakeBbs, LINE, type FakeArticle, type FakeBbsOptions } from '../fakes/fakeBbs';
@@ -48,7 +49,7 @@ async function setup(
   const session = new Session(transport, { keepAliveMs: 0 });
   let nowMs = 0;
   const service = new PttService(session, {
-    boardEnterTimeoutMs: 150,
+    boardEnterTimeoutMs: 1000,
     now: () => nowMs,
     ...options.service,
   });
@@ -234,6 +235,17 @@ describe('getBoardPage', () => {
   it('rejects a board that does not exist', async () => {
     const { service } = await setup({ Dev: board(3) });
     await expect(service.getBoardPage('Nope')).rejects.toMatchObject({ code: 'boardNotFound' });
+    expect((await service.getBoardPage('Dev')).articles).toHaveLength(3); // and recovers
+  });
+
+  it('reports an unknown entry screen as a timeout with its snapshot, not as a missing board', async () => {
+    const { service } = await setup(
+      { Dev: board(3), Odd: board(2) },
+      { bbs: { oddWelcome: ['Odd'] } }
+    );
+    const error = await service.getBoardPage('Odd').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(WaitTimeoutError);
+    expect((error as WaitTimeoutError).snapshot.join('\n')).toContain('瀏覽 第 1/2 頁');
     expect((await service.getBoardPage('Dev')).articles).toHaveLength(3); // and recovers
   });
 });

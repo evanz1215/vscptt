@@ -476,34 +476,29 @@ export class PttService {
     await s.waitFor(isBoardSelectPrompt, 'the board name prompt');
     s.send(board, Keys.ENTER);
 
+    // A timeout here means a screen we do not know, not a missing board: let it through with its snapshot.
     let list: BoardListScreen | null = null;
-    try {
-      for (let step = 0; step < 4 && !list; step++) {
-        const screen = await s.waitFor(
-          (l) =>
-            isBoardList(l)
-              ? 'list'
-              : isAnyKeyPrompt(l)
-                ? 'anyKey'
-                : isMainMenu(l) && !isLogoutConfirm(l)
-                  ? 'menu' // the prompt closed and the main menu is back: PTT has no such board
-                  : false,
-          'the board screen',
-          this.boardEnterTimeoutMs
-        );
-        if (screen === 'menu') {
-          break;
-        }
-        if (screen === 'anyKey') {
-          await s.sendAndWaitChange(Keys.SPACE, 'the board list');
-        } else {
-          await s.settle(); // the first sight of the list can be half drawn (SSH sends a screen in pieces)
-          list = parseBoardList(s.lines);
-        }
+    for (let step = 0; step < 4 && !list; step++) {
+      const screen = await s.waitFor(
+        (l) =>
+          isBoardList(l)
+            ? 'list'
+            : isAnyKeyPrompt(l)
+              ? 'anyKey'
+              : isMainMenu(l) && !isLogoutConfirm(l)
+                ? 'menu' // the prompt closed and the main menu is back: PTT has no such board
+                : false,
+        'the board screen',
+        this.boardEnterTimeoutMs
+      );
+      if (screen === 'menu') {
+        break;
       }
-    } catch (error) {
-      if (!(error instanceof WaitTimeoutError)) {
-        throw error;
+      if (screen === 'anyKey') {
+        await s.sendAndWaitChange(Keys.SPACE, 'the board list');
+      } else {
+        await s.settle(); // the first sight of the list can be half drawn (SSH sends a screen in pieces)
+        list = parseBoardList(s.lines);
       }
     }
 

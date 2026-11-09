@@ -21,7 +21,7 @@ function article(i: number, extra: Partial<FakeArticle> = {}): FakeArticle {
 async function setup(articles: FakeArticle[]) {
   const bbs = new FakeBbs({ boards: { Dev: articles } });
   const session = new Session(bbs.connect(), { keepAliveMs: 0 });
-  const service = new PttService(session, { boardEnterTimeoutMs: 150 });
+  const service = new PttService(session, { boardEnterTimeoutMs: 1000 });
   await service.login({ username: 'alice', password: 'secret' });
   return { bbs, session, service };
 }
