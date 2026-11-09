@@ -1,3 +1,6 @@
 allowBuilds:
   '@vscode/vsce-sign': false
   esbuild: true
+  # Optional native speed-ups for SSH; the bundle uses ssh2's pure JS code and leaves them out (esbuild.mjs).
+  cpu-features: false
+  ssh2: false
