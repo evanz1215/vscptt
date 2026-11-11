@@ -97,7 +97,8 @@ function repeats(merged: string[], next: string[], n: number): boolean {
   );
 }
 
-const PUSH = /^(推|噓|→)\s*(\S+?):\s*(.*?)\s+(\d{2}\/\d{2})(?:\s+(\d{2}:\d{2}))?\s*$/;
+// Some articles pad the id to 12 columns before the colon ("噓 yuijen      : ..."), others do not.
+const PUSH = /^(推|噓|→)\s*(\S+?)\s*:\s*(.*?)\s+(\d{2}\/\d{2})(?:\s+(\d{2}:\d{2}))?\s*$/;
 const SIGNATURE = /^※\s*(發信站|文章網址)/;
 const TRANSFER_LINE = /^※\s*轉錄者:/;
 const URL_LINE = /^※\s*文章網址:\s*(https?:\/\/\S+)/;

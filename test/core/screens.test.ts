@@ -279,6 +279,29 @@ describe('article content', () => {
     expect(pinned.pushes).toHaveLength(20);
   });
 
+  it('reads pushes whose user id is padded before the colon', () => {
+    // Seen live (LoL M.1794357805.A.592): ids shorter than 12 are padded with spaces before the colon.
+    const parsed = parseArticle([
+      'text',
+      '--',
+      '※  發信站: 批踢踢實業坊(ptt.cc), 來自: 192.0.2.1 (臺灣)',
+      '※  文章網址: https://www.ptt.cc/bbs/LoL/M.1794357805.A.592.html',
+      '噓 yuijen      : 香腸嘴下去啦                                   11/11 08:43',
+      '→ xxxu        : op                                              11/11 08:48',
+      '噓 mayday840717: 這麼順風還能被噓                               11/11 08:53',
+      '推 gaym19      : 多蘭沒爛到需要被他噴                           11/11 08:55',
+    ]);
+    expect(parsed.bodyLines.at(-1)).toContain('文章網址');
+    expect(parsed.pushes.map((p) => p.userId)).toEqual(['yuijen', 'xxxu', 'mayday840717', 'gaym19']);
+    expect(parsed.pushes[0]).toEqual({
+      kind: '噓',
+      userId: 'yuijen',
+      content: '香腸嘴下去啦',
+      date: '11/11',
+      time: '08:43',
+    });
+  });
+
   it('treats an article without a header as body only', () => {
     const parsed = parseArticle(['just some text', '', '']);
     expect(parsed.header).toBeNull();
