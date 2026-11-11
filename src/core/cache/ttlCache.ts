@@ -25,7 +25,22 @@ export class TtlCache<V> {
   }
 
   set(key: string, value: V, ttlMs: number): void {
+    this.prune(); // expired entries are otherwise dropped only when the same key is read again
     this.entries.set(key, { value, expiresAt: this.now() + ttlMs });
+  }
+
+  /** Drops every expired entry. */
+  prune(): void {
+    const now = this.now();
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAt <= now) {
+        this.entries.delete(key);
+      }
+    }
+  }
+
+  get size(): number {
+    return this.entries.size;
   }
 
   /** Returns the cached value, or runs `loader` once even if several callers ask at the same time. */

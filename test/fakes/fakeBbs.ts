@@ -48,6 +48,8 @@ export interface FakeBbsOptions {
   splitFrames?: boolean;
   /** Boards whose entry screen has a footer the client does not know (no 任意鍵). */
   oddWelcome?: string[];
+  /** The hot boards (Ctrl-Z, t), in order; 'silent' ignores Ctrl-Z. */
+  hotBoards?: string[] | 'silent';
 }
 
 type Mode =
@@ -60,6 +62,8 @@ type Mode =
   | 'main'
   | 'favorites'
   | 'select'
+  | 'quickSwitch'
+  | 'hot'
   | 'boardWelcome'
   | 'list'
   | 'searchPrompt'
@@ -167,6 +171,11 @@ export class FakeBbs {
     /** The row that opened this level, so Left puts the cursor back on it. */
     from?: number;
   }> = [];
+  private hotLevel: { names: string[]; cursor: number; top: number } = {
+    names: [],
+    cursor: 0,
+    top: 0,
+  };
   private items: FakeArticle[] = [];
   private cursor = 0;
   private top = 0;
@@ -194,6 +203,7 @@ export class FakeBbs {
       aidJumpIgnored: options.aidJumpIgnored ?? false,
       splitFrames: options.splitFrames ?? false,
       oddWelcome: options.oddWelcome ?? [],
+      hotBoards: options.hotBoards ?? [],
     };
     for (const articles of Object.values(this.options.boards)) {
       FakeBbs.renumber(articles);
@@ -279,6 +289,16 @@ export class FakeBbs {
         return this.render();
       case 'favorites':
         return this.onFavorites(key);
+      case 'hot':
+        return this.onFavorites(key);
+      case 'quickSwitch':
+        if (key === 't' && this.options.hotBoards !== 'silent') {
+          this.mode = 'hot';
+          this.hotLevel = { names: this.options.hotBoards, cursor: 0, top: 0 };
+          return this.render();
+        }
+        if (key !== 't') this.mode = 'main';
+        return this.render();
       case 'list':
         return this.onList(key);
       case 'article':
@@ -389,6 +409,11 @@ export class FakeBbs {
   }
 
   private onMain(key: string): void {
+    // 'silent': Ctrl-Z does nothing, as for an account without the permission (mbbsd/menu.c ZA_Select).
+    if (key === '\x1a' && this.options.hotBoards !== 'silent') {
+      this.mode = 'quickSwitch';
+      return this.render();
+    }
     if (key === 's') {
       this.mode = 'select';
       this.buffer = '';
@@ -421,6 +446,9 @@ export class FakeBbs {
 
   /** The level on screen. The list is created on first use and, like PTT, remembers where it was left. */
   private get fav() {
+    if (this.mode === 'hot') {
+      return this.hotLevel; // the hot boards use the same list screen and keys
+    }
     if (this.favoriteLevels.length === 0) {
       this.favoriteLevels.push({ names: this.options.favorites, cursor: 0, top: 0 });
     }
@@ -454,13 +482,15 @@ export class FakeBbs {
         });
         this.render();
       } else if (name && name !== LINE) {
-        this.listParent = 'favorites';
+        this.listParent = this.mode === 'hot' ? 'main' : 'favorites';
         this.beginBoard(name);
       }
       return;
     }
     if (key === 'LEFT') {
-      if (this.favoriteLevels.length > 1) {
+      if (this.mode === 'hot') {
+        this.mode = 'main';
+      } else if (this.favoriteLevels.length > 1) {
         this.favoriteLevels.pop();
       } else {
         this.mode = 'main';
@@ -758,6 +788,13 @@ export class FakeBbs {
         return this.screen(this.mainRows());
       case 'favorites':
         return this.screen(this.favoriteRows());
+      case 'hot':
+        return this.screen(this.favoriteRows());
+      case 'quickSwitch': {
+        const rows = this.mainRows();
+        rows[23] = ' 快速切換  (b)文章列表 (c)分類 (t)熱門 (f)我的最愛 (← )離開';
+        return this.screen(rows);
+      }
       case 'select':
         return this.screen(['【 選擇看板 】', `請輸入看板名稱(按空白鍵自動搜尋): ${this.buffer}`]);
       case 'boardWelcome':
@@ -860,7 +897,10 @@ export class FakeBbs {
             ? `${cursor}${String(i + 1).padStart(6)}   MyFavFolder  目錄 ◎${name.slice(FOLDER.length)}`
             : `${cursor}${String(i + 1).padStart(6)} ˇ ${name.padEnd(13)} 綜合 ◎ [${name}] ${name} 板`;
     });
-    rows[23] = ' 我的最愛  (a)增加看板 (d)刪除 (g)新增目錄 (← )回上層 (h)說明';
+    rows[23] =
+      this.mode === 'hot'
+        ? ' 看板列表  (→ )進入 (s)找看板 (/)搜尋 (← )回上層 (h)說明'
+        : ' 我的最愛  (a)增加看板 (d)刪除 (g)新增目錄 (← )回上層 (h)說明';
     return rows;
   }
 

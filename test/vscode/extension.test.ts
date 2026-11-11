@@ -232,6 +232,30 @@ describe('using it, start to finish', () => {
     expect(t.transports[0]!.sent.slice(-3)).toEqual(['G\r', 'Y\r', ' ']);
   });
 
+  it('opens the hot boards only when asked, then a board in them and its newest article', async () => {
+    const t = boot({ hotBoards: ['Dev'] });
+    await t.login();
+    const [, hot] = await t.tree.getChildren();
+    expect(t.itemOf(hot!).label).toBe('熱門看板');
+    expect(t.transports[0]!.sent.join('')).not.toContain('\x1a'); // collapsed: nothing read yet
+
+    const [dev] = await t.tree.getChildren(hot);
+    expect(dev).toMatchObject({ kind: 'board', group: 'hot', board: 'Dev' });
+    const newest = (await t.tree.getChildren(dev)).find((n) => n.kind === 'article')!;
+    await t.invoke(newest);
+    expect(mock.shownTexts[0]).toContain('標題：[測試] 第30篇');
+  });
+
+  it('shows a retry node in the hot boards group when PTT does not open them', async () => {
+    const t = boot({ hotBoards: 'silent' });
+    await t.login();
+    const [, hot] = await t.tree.getChildren();
+    const [node] = await t.tree.getChildren(hot);
+    expect(node).toMatchObject({ kind: 'message', command: 'vscptt.refresh' });
+    const [favorites] = await t.tree.getChildren(); // the favorites still load
+    expect(await t.tree.getChildren(favorites)).toMatchObject([{ kind: 'board', board: 'Dev' }]);
+  }, 20_000);
+
   it('reads a pinned article', async () => {
     const t = boot();
     await t.login();
@@ -262,7 +286,7 @@ describe('using it, start to finish', () => {
     expect(last.level).toBe('error');
     expect(last.message).toContain('找不到看板');
 
-    const [, opened] = await t.tree.getChildren();
+    const [, , opened] = await t.tree.getChildren();
     expect(
       (await t.tree.getChildren(opened)).map((n) => (n.kind === 'board' ? n.board : ''))
     ).toEqual(['Dev']);

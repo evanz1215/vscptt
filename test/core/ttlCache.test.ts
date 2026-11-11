@@ -96,4 +96,26 @@ describe('TtlCache', () => {
       3,
     ]);
   });
+
+  it('drops expired entries when something new is stored, but keeps live ones', () => {
+    const c = clock();
+    const cache = new TtlCache<string>(c.now);
+    cache.set('old', 'x', 100);
+    cache.set('long', 'y', 1000);
+    c.advance(100);
+    cache.set('new', 'z', 100);
+    expect(cache.size).toBe(2); // 'old' is gone without ever being read again
+    expect(cache.get('long')).toBe('y');
+  });
+
+  it('prune() alone drops only what has expired', () => {
+    const c = clock();
+    const cache = new TtlCache<string>(c.now);
+    cache.set('a', 'x', 100);
+    cache.set('b', 'y', 200);
+    c.advance(150);
+    cache.prune();
+    expect(cache.size).toBe(1);
+    expect(cache.get('b')).toBe('y');
+  });
 });

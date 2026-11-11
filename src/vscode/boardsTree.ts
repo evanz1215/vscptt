@@ -12,7 +12,7 @@ import type { ConnectionState } from './connection';
 import { describeError } from './errorMessages';
 import type { OpenedBoards } from './openedBoards';
 
-export type Group = 'favorites' | 'opened' | 'search';
+export type Group = 'favorites' | 'hot' | 'opened' | 'search';
 
 export type TreeNode =
   | { kind: 'login'; connecting: boolean }
@@ -36,6 +36,7 @@ export type TreeNode =
 /** What the tree reads PTT through. PttService satisfies it. */
 export interface ReadService {
   getFavorites(): Promise<FavoriteEntry[]>;
+  getHotBoards(): Promise<FavoriteEntry[]>;
   getBoardPage(board: string, cursor?: PageCursor): Promise<BoardPage>;
   searchBoard(board: string, query: SearchQuery, cursor?: PageCursor): Promise<BoardPage>;
   invalidate(board?: string): void;
@@ -199,9 +200,11 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
       case 'group':
         return node.group === 'favorites'
           ? this.favoriteNodes()
-          : node.group === 'opened'
-            ? this.openedNodes()
-            : this.searches.map((s) => ({ kind: 'search' as const, ...s }));
+          : node.group === 'hot'
+            ? this.hotNodes()
+            : node.group === 'opened'
+              ? this.openedNodes()
+              : this.searches.map((s) => ({ kind: 'search' as const, ...s }));
       case 'search':
         return this.searchChildren(node.id);
       case 'folder':
@@ -231,18 +234,25 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
         const item = new vscode.TreeItem(
           node.group === 'favorites'
             ? '我的最愛'
-            : node.group === 'opened'
-              ? '已開啟的看板'
-              : '搜尋結果',
-          vscode.TreeItemCollapsibleState.Expanded
+            : node.group === 'hot'
+              ? '熱門看板'
+              : node.group === 'opened'
+                ? '已開啟的看板'
+                : '搜尋結果',
+          // The hot boards are read only when opened: no extra trip to PTT at every login.
+          node.group === 'hot'
+            ? vscode.TreeItemCollapsibleState.Collapsed
+            : vscode.TreeItemCollapsibleState.Expanded
         );
         item.id = `group:${node.group}`;
         item.iconPath = icon(
           node.group === 'favorites'
             ? 'star-full'
-            : node.group === 'opened'
-              ? 'folder-opened'
-              : 'search'
+            : node.group === 'hot'
+              ? 'flame'
+              : node.group === 'opened'
+                ? 'folder-opened'
+                : 'search'
         );
         item.contextValue = 'group';
         return item;
@@ -320,6 +330,7 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
       case 'ready':
         return [
           { kind: 'group', group: 'favorites' },
+          { kind: 'group', group: 'hot' },
           { kind: 'group', group: 'opened' },
           ...(this.searches.length > 0
             ? [{ kind: 'group' as const, group: 'search' as const }]
@@ -339,6 +350,24 @@ export class BoardsTreeProvider implements vscode.TreeDataProvider<TreeNode>, vs
         return [{ kind: 'message', text: '最愛清單是空的', icon: 'info' }];
       }
       return favoriteItems(favorites, '');
+    } catch (error) {
+      return [errorNode(error)];
+    }
+  }
+
+  private async hotNodes(): Promise<TreeNode[]> {
+    try {
+      const hot = await this.connection.service.getHotBoards();
+      if (hot.length === 0) {
+        return [{ kind: 'message', text: '沒有熱門看板', icon: 'info' }];
+      }
+      return hot.map((b) => ({
+        kind: 'board' as const,
+        group: 'hot' as const,
+        board: b.name,
+        category: b.category,
+        title: b.title,
+      }));
     } catch (error) {
       return [errorNode(error)];
     }

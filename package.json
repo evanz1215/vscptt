@@ -413,7 +413,7 @@
           "default": 300,
           "minimum": 0,
           "maximum": 86400,
-          "description": "我的最愛清單的快取秒數。下次登入時生效。"
+          "description": "我的最愛與熱門看板清單的快取秒數。下次登入時生效。"
         }
       }
     }

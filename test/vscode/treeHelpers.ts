@@ -71,6 +71,14 @@ export class FakeReadService implements ReadService {
     return this.favorites;
   }
 
+  hot: FavoriteEntry[] = [];
+
+  async getHotBoards(): Promise<FavoriteEntry[]> {
+    this.calls.push('getHotBoards');
+    await this.pause();
+    return this.hot;
+  }
+
   async getBoardPage(board: string, cursor?: PageCursor): Promise<BoardPage> {
     this.calls.push(`getBoardPage:${board}:${cursor ? cursor.before : 'latest'}`);
     await this.pause();

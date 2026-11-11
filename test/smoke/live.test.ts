@@ -55,6 +55,15 @@ describe.skipIf(!live)('live PTT smoke test', () => {
           expect(f.name).toMatch(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/);
         }
 
+        // hot boards (Ctrl-Z, t): more than a page of real board names, and one of them opens
+        const hot = await service.getHotBoards();
+        expect(hot.length).toBeGreaterThan(20);
+        for (const b of hot) {
+          expect(b.name).toMatch(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/);
+        }
+        expect(new Set(hot.map((b) => b.name)).size).toBe(hot.length);
+        expect(await service.openBoard(hot[0]!.name)).toBe(true);
+
         // entering boards: a real one, one that does not exist
         expect(await service.openBoard(BOARD)).toBe(true);
         expect(await service.openBoard('NoSuchBoardZzqx')).toBe(false);

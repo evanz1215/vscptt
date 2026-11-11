@@ -53,10 +53,18 @@ describe.skipIf(!live)('live PTT through the extension', () => {
         expect(mock.statusItems[0]!.text).toContain(user);
 
         // favorites load without error
-        const [favorites, opened] = await tree.getChildren();
+        const roots = await tree.getChildren();
+        const group = (g: string) => roots.find((n) => n.kind === 'group' && n.group === g)!;
+        const favorites = group('favorites');
+        const opened = group('opened');
         const favoriteNodes = await tree.getChildren(favorites);
         expect(favoriteNodes.every((n) => n.kind === 'board' || n.kind === 'message')).toBe(true);
         expect(favoriteNodes.some((n) => n.kind === 'message' && n.icon === 'warning')).toBe(false);
+
+        // the hot boards group lists boards, not an error
+        const hotNodes = await tree.getChildren(group('hot'));
+        expect(hotNodes.length).toBeGreaterThan(0);
+        expect(hotNodes.every((n) => n.kind === 'board')).toBe(true);
 
         // open a board by name; it appears under "opened boards"
         mock.inputAnswers.push(BOARD);

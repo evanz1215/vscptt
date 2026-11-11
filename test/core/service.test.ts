@@ -12,7 +12,7 @@ import { Keys } from '../../src/core/keys';
 import type { BoardPage } from '../../src/core/models';
 import { WaitTimeoutError } from '../../src/core/queue/waitFor';
 import { PttService, type PttServiceOptions } from '../../src/core/service';
-import { Session } from '../../src/core/session/session';
+import { Session, type SessionOptions } from '../../src/core/session/session';
 import { FOLDER, FakeBbs, LINE, type FakeArticle, type FakeBbsOptions } from '../fakes/fakeBbs';
 import type { FakeTransport } from '../fakes/fakeTransport';
 
@@ -42,11 +42,16 @@ function board(count: number, pinned = 0): FakeArticle[] {
 
 async function setup(
   boards: Record<string, FakeArticle[]>,
-  options: { favorites?: string[]; bbs?: FakeBbsOptions; service?: PttServiceOptions } = {}
+  options: {
+    favorites?: string[];
+    bbs?: FakeBbsOptions;
+    service?: PttServiceOptions;
+    session?: SessionOptions;
+  } = {}
 ) {
   const bbs = new FakeBbs({ boards, favorites: options.favorites ?? [], ...options.bbs });
   const transport = bbs.connect();
-  const session = new Session(transport, { keepAliveMs: 0 });
+  const session = new Session(transport, { keepAliveMs: 0, ...options.session });
   let nowMs = 0;
   const service = new PttService(session, {
     boardEnterTimeoutMs: 1000,
@@ -90,6 +95,53 @@ describe('favorites', () => {
     const sent = transport.sent.length;
     await service.getFavorites();
     expect(transport.sent.length).toBe(sent);
+  });
+});
+
+describe('hot boards', () => {
+  const names = (n: number) => Array.from({ length: n }, (_, i) => `Hot${i + 1}`);
+
+  it('lists every hot board in order, across pages, through Ctrl-Z and t', async () => {
+    const { service, transport } = await setup({}, { bbs: { hotBoards: names(45) } });
+    const hot = await service.getHotBoards();
+    expect(hot.map((b) => b.name)).toEqual(names(45));
+    expect(hot[0]).toMatchObject({ kind: 'board', category: '綜合', title: '[Hot1] Hot1 板' });
+    expect(transport.sent.join('')).toContain('\x1at');
+  });
+
+  it('is cached like the favorites and dropped by invalidate()', async () => {
+    const { service, transport } = await setup({}, { bbs: { hotBoards: names(3) } });
+    await service.getHotBoards();
+    const sent = transport.sent.length;
+    await service.getHotBoards();
+    expect(transport.sent.length).toBe(sent);
+    service.invalidate();
+    await service.getHotBoards();
+    expect(transport.sent.length).toBeGreaterThan(sent);
+  });
+
+  it('opens a board found there like any other', async () => {
+    const { service } = await setup({ Hot1: board(3) }, { bbs: { hotBoards: ['Hot1'] } });
+    const [first] = await service.getHotBoards();
+    expect((await service.getBoardPage(first!.name)).articles).toHaveLength(3);
+  });
+
+  it('returns an empty list when PTT lists none', async () => {
+    const { service } = await setup({}, { bbs: { hotBoards: [] } });
+    expect(await service.getHotBoards()).toEqual([]);
+  });
+
+  it('times out when the list never comes, does not cache that, and recovers', async () => {
+    const { service, transport } = await setup(
+      { Dev: board(3) },
+      { bbs: { hotBoards: 'silent' }, session: { stepTimeoutMs: 500 } }
+    );
+    await expect(service.getHotBoards()).rejects.toBeInstanceOf(WaitTimeoutError);
+    expect((await service.getBoardPage('Dev')).articles).toHaveLength(3); // back on the main menu
+    const tries = () => transport.sent.join('').split('\x1a').length - 1;
+    const before = tries();
+    await expect(service.getHotBoards()).rejects.toBeInstanceOf(WaitTimeoutError);
+    expect(tries()).toBe(before + 1); // the failure was not cached: PTT is asked again
   });
 });
 

@@ -9,7 +9,11 @@ import {
   parseArticleStatus,
 } from '../../src/core/screens/article';
 import { isBoardList, parseBoardList } from '../../src/core/screens/boardList';
-import { isFavoritesScreen, parseFavorites } from '../../src/core/screens/favorites';
+import {
+  isFavoritesScreen,
+  isHotBoardsScreen,
+  parseFavorites,
+} from '../../src/core/screens/favorites';
 import {
   isAnyKeyPrompt,
   isBoardSelectPrompt,
@@ -114,6 +118,16 @@ describe('favorites', () => {
       [4, 'Python', '程設', false, false],
       [5, 'Stock', '學術', true, false],
     ]);
+  });
+
+  it('is never taken for the hot boards, which share the screen but say 看板列表 in the footer', () => {
+    expect(isHotBoardsScreen(lines)).toBe(false);
+    const hot = [...lines];
+    hot[23] = ' 看板列表  (→ )進入 (s)找看板 (/)搜尋 (← )回上層 (h)說明';
+    expect(isHotBoardsScreen(hot)).toBe(true);
+    expect(isFavoritesScreen(hot)).toBe(false);
+    expect(parseFavorites(hot).map((r) => r.name)).toContain('Gossiping'); // same rows
+    expect(isHotBoardsScreen(screen('board_list_entry'))).toBe(false);
   });
 });
 

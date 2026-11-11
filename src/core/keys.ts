@@ -10,4 +10,6 @@ export const Keys = {
   PGDN: '\x1b[6~',
   /** Ctrl-L: redraw. Used as a harmless keep-alive. Whether it resets the idle timer is not verified. */
   REDRAW: '\x0c',
+  /** Ctrl-Z: the quick-switch menu (mbbsd/menu.c za_cmds); `t` in it opens the hot boards. */
+  QUICK_SWITCH: '\x1a',
 } as const;

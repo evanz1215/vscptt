@@ -36,6 +36,7 @@ import {
 import {
   type FavoriteRow,
   isFavoritesScreen,
+  isHotBoardsScreen,
   parseFavorites,
   selectedNumber,
 } from './screens/favorites';
@@ -73,6 +74,8 @@ const FAVORITES_PAGE_LIMIT = 10;
 const FAVORITES_DEPTH_LIMIT = 3;
 const FAVORITES_FOLDER_LIMIT = 20;
 const LIST_PAGE_SIZE = 20;
+/** How often expired cache entries are dropped while the extension sits idle. */
+export const CACHE_SWEEP_MS = 5 * 60_000;
 const MAX_LIST_NUMBER = 9_999_999; // PTT shows at most 6 digits per number; stay clear of exponent notation
 
 /**
@@ -110,8 +113,16 @@ export class PttService {
     this.pages = new TtlCache(options.now);
     this.articles = new TtlCache(options.now);
     this.favorites = new TtlCache(options.now);
+    // VS Code often stays open for days: drop expired results even while nothing new is read.
+    const sweep = setInterval(() => {
+      this.pages.prune();
+      this.articles.prune();
+      this.favorites.prune();
+    }, CACHE_SWEEP_MS);
+    sweep.unref?.();
     session.onStateChange((state) => {
       if (state === 'disconnected') {
+        clearInterval(sweep);
         this.invalidate();
       }
     });
@@ -142,6 +153,16 @@ export class PttService {
     return structuredClone(
       await this.favorites.getOrLoad('favorites', this.ttl.favorites, () =>
         this.session.run(() => this.guard(() => this.loadFavorites()))
+      )
+    );
+  }
+
+  /** The hot boards (熱門看板), cached like the favorites. */
+  async getHotBoards(): Promise<FavoriteEntry[]> {
+    this.session.assertReady();
+    return structuredClone(
+      await this.favorites.getOrLoad('hot', this.ttl.favorites, () =>
+        this.session.run(() => this.guard(() => this.loadHotBoards()))
       )
     );
   }
@@ -296,6 +317,22 @@ export class PttService {
 
   // ---- operations (all run inside the session queue) ----
 
+  /** Main menu, Ctrl-Z, `t`: the hot boards, in PTT's order. Only boards are kept. */
+  private async loadHotBoards(): Promise<FavoriteEntry[]> {
+    await this.session.toMainMenu();
+    this.session.send(Keys.QUICK_SWITCH, 't');
+    const rows = await this.readFavoriteRows({ is: isHotBoardsScreen, name: 'hot boards' });
+    return rows
+      .filter((r) => r.kind === 'board')
+      .map((r) => ({
+        kind: 'board',
+        name: r.name,
+        category: r.category,
+        title: r.title,
+        unread: r.unread,
+      }));
+  }
+
   private async loadFavorites(): Promise<FavoriteEntry[]> {
     await this.session.toMainMenu();
     this.session.send('F', Keys.RIGHT);
@@ -397,13 +434,18 @@ export class PttService {
     }
   }
 
-  /** Every row of the favorites list on screen, all pages, in order. */
-  private async readFavoriteRows(): Promise<FavoriteRow[]> {
+  /** Every row of the board list on screen (favorites, or `list` for the hot boards), all pages, in order. */
+  private async readFavoriteRows(
+    list: { is: (l: readonly string[]) => boolean; name: string } = {
+      is: isFavoritesScreen,
+      name: 'favorites',
+    }
+  ): Promise<FavoriteRow[]> {
     const s = this.session;
     let rows = (
       await s.waitFor(
-        (l) => (isFavoritesScreen(l) ? { rows: parseFavorites(l) } : false),
-        'the favorites list'
+        (l) => (list.is(l) ? { rows: parseFavorites(l) } : false),
+        `the ${list.name} list`
       )
     ).rows;
     const all = new Map(rows.map((r) => [r.number, r]));
@@ -418,13 +460,13 @@ export class PttService {
       try {
         rows = await s.waitFor(
           (l) => {
-            if (!isFavoritesScreen(l)) {
+            if (!list.is(l)) {
               return false;
             }
             const previous = parseFavorites(l);
             return previous.some((r) => r.number < lowest) ? previous : false;
           },
-          'the previous favorites page',
+          `the previous ${list.name} page`,
           this.nextPageTimeoutMs
         );
       } catch (error) {
@@ -445,13 +487,13 @@ export class PttService {
       try {
         rows = await s.waitFor(
           (l) => {
-            if (!isFavoritesScreen(l)) {
+            if (!list.is(l)) {
               return false;
             }
             const next = parseFavorites(l);
             return next.some((r) => r.number > highest) ? next : false;
           },
-          'the next favorites page',
+          `the next ${list.name} page`,
           this.nextPageTimeoutMs
         );
       } catch (error) {

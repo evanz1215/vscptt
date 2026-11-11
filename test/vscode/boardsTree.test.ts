@@ -42,11 +42,14 @@ describe('root', () => {
     expect(item.command).toBeUndefined();
   });
 
-  it('shows the favorites and opened-boards groups once logged in', async () => {
-    const { tree, labels } = setup();
-    expect(await labels()).toEqual(['我的最愛', '已開啟的看板']);
-    const [fav] = await tree.getChildren();
+  it('shows the favorites, hot boards and opened-boards groups once logged in', async () => {
+    const { tree, labels, connection } = setup();
+    expect(await labels()).toEqual(['我的最愛', '熱門看板', '已開啟的看板']);
+    const [fav, hot] = await tree.getChildren();
     expect(tree.getTreeItem(fav!).collapsibleState).toBe(vscode.TreeItemCollapsibleState.Expanded);
+    // Collapsed, so nothing is read from PTT until it is opened.
+    expect(tree.getTreeItem(hot!).collapsibleState).toBe(vscode.TreeItemCollapsibleState.Collapsed);
+    expect(connection.read.calls).not.toContain('getHotBoards');
   });
 
   it('redraws and forgets loaded boards when the connection state changes', async () => {
@@ -164,6 +167,45 @@ describe('favorites and opened boards', () => {
     const none = setup();
     const [hint] = await none.tree.getChildren({ kind: 'group', group: 'opened' });
     expect(none.tree.getTreeItem(hint!).command?.command).toBe('vscptt.openBoard');
+  });
+});
+
+describe('hot boards', () => {
+  const hotGroup: TreeNode = { kind: 'group', group: 'hot' };
+
+  it('lists the hot boards in order, as boards that open into their articles', async () => {
+    const { connection, tree } = setup();
+    connection.read.hot = [
+      { kind: 'board', name: 'Gossiping', category: '綜合', title: '[八卦] 板', unread: true },
+      { kind: 'board', name: 'LoL', category: '遊戲', title: '[LoL] 板', unread: false },
+    ];
+    connection.read.pages.set('lol', [page('LoL', [2, 1])]);
+    const nodes = await tree.getChildren(hotGroup);
+    expect(nodes.map((n) => tree.getTreeItem(n).label)).toEqual(['Gossiping', 'LoL']);
+    const item = tree.getTreeItem(nodes[1]!);
+    expect(item).toMatchObject({ description: '遊戲', tooltip: '[LoL] 板', contextValue: 'board' });
+    expect(item.id).toBe('board:hot::lol'); // not the id of the same board under the favorites
+    const articles = await tree.getChildren(nodes[1]!);
+    expect(articles.some((n) => n.kind === 'article')).toBe(true);
+  });
+
+  it('says so when there are none', async () => {
+    const { tree } = setup();
+    const [node] = await tree.getChildren(hotGroup);
+    expect(tree.getTreeItem(node!).label).toBe('沒有熱門看板');
+  });
+
+  it('turns a failure into a retry node and leaves the other groups working', async () => {
+    const { connection, tree } = setup();
+    connection.read.failWith = new Error('boom');
+    const [node] = await tree.getChildren(hotGroup);
+    expect(tree.getTreeItem(node!).command?.command).toBe('vscptt.refresh');
+    connection.read.failWith = undefined;
+    connection.read.favorites = [
+      { kind: 'board', name: 'Dev', category: '工作', title: '', unread: false },
+    ];
+    const fav = await tree.getChildren({ kind: 'group', group: 'favorites' });
+    expect(tree.getTreeItem(fav[0]!).label).toBe('Dev');
   });
 });
 
@@ -395,19 +437,19 @@ describe('search results', () => {
 
   it('has no search group until a search was added, then lists it as a node under the group', async () => {
     const { tree, labels } = setup();
-    expect(await labels()).toEqual(['我的最愛', '已開啟的看板']);
+    expect(await labels()).toEqual(['我的最愛', '熱門看板', '已開啟的看板']);
 
     tree.addSearch('Dev', title, results('Dev', [3, 2, 1]));
 
-    expect(await labels()).toEqual(['我的最愛', '已開啟的看板', '搜尋結果']);
-    const group = (await tree.getChildren())[2]!;
+    expect(await labels()).toEqual(['我的最愛', '熱門看板', '已開啟的看板', '搜尋結果']);
+    const group = (await tree.getChildren())[3]!;
     expect(await labels(group)).toEqual(['Dev：標題「測試」']);
   });
 
   it('shows the first page it was given without asking the server again', async () => {
     const { connection, tree } = setup();
     tree.addSearch('Dev', title, results('Dev', [3, 2, 1]));
-    const [node] = await tree.getChildren((await tree.getChildren())[2]!);
+    const [node] = await tree.getChildren((await tree.getChildren())[3]!);
     const children = await tree.getChildren(node);
     expect(children.map((n) => n.kind)).toEqual(['article', 'article', 'article']);
     expect(connection.read.calls.filter((c) => c.startsWith('searchBoard'))).toEqual([]);
@@ -420,7 +462,7 @@ describe('search results', () => {
       ...results('Dev', [2, 1]),
       articles: [summary(2), summary(1)],
     });
-    const group = (await tree.getChildren())[2]!;
+    const group = (await tree.getChildren())[3]!;
     const ids: string[] = [];
     for (const search of await tree.getChildren(group)) {
       for (const article of await tree.getChildren(search)) {
@@ -437,7 +479,7 @@ describe('search results', () => {
       results('Dev', [28, 27]),
     ]);
     const id = tree.addSearch('Dev', title, results('Dev', [30, 29], true));
-    const [search] = await tree.getChildren((await tree.getChildren())[2]!);
+    const [search] = await tree.getChildren((await tree.getChildren())[3]!);
 
     const before = await tree.getChildren(search);
     const more = before.at(-1)!;
@@ -463,7 +505,7 @@ describe('search results', () => {
     tree.addSearch('Dev', author, results('Dev', [1]));
     tree.addSearch('Dev', { kind: 'push', threshold: 5 }, results('Dev', [1]));
 
-    const group = (await tree.getChildren())[2]!;
+    const group = (await tree.getChildren())[3]!;
     const labels = (await tree.getChildren(group)).map((n) => String(tree.getTreeItem(n).label));
     expect(labels).toEqual(['Dev：推文數超過 5', 'Dev：作者 bob']);
   });
@@ -473,11 +515,11 @@ describe('search results', () => {
     const a = tree.addSearch('Dev', title, results('Dev', [1]));
     tree.addSearch('Dev', author, results('Dev', [1]));
     tree.removeSearch(a);
-    expect(await labels((await tree.getChildren())[2]!)).toEqual(['Dev：作者 bob']);
+    expect(await labels((await tree.getChildren())[3]!)).toEqual(['Dev：作者 bob']);
 
     connection.setState('disconnected');
     connection.setState('ready');
-    expect(await labels()).toEqual(['我的最愛', '已開啟的看板']);
+    expect(await labels()).toEqual(['我的最愛', '熱門看板', '已開啟的看板']);
   });
 
   it('shows an error node instead of failing when a search cannot be run again', async () => {
@@ -485,7 +527,7 @@ describe('search results', () => {
     tree.addSearch('Dev', title, results('Dev', [1]));
     tree.refresh(); // drops the loaded results, so opening the node searches again
     connection.read.failWith = new ConnectionClosedError();
-    const [search] = await tree.getChildren((await tree.getChildren())[2]!);
+    const [search] = await tree.getChildren((await tree.getChildren())[3]!);
     const [node] = await tree.getChildren(search);
     expect(node!.kind).toBe('message');
   });

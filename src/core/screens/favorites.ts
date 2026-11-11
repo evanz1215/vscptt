@@ -17,6 +17,17 @@ export function isFavoritesScreen(lines: Lines): boolean {
   return (lines[0] ?? '').startsWith('【看板列表】') && (lines[23] ?? '').includes('我的最愛');
 }
 
+/**
+ * The hot boards use the same list screen; its footer caption is 看板列表 instead of 我的最愛
+ * (mbbsd/board.c brdlist_caption). Rows are read with parseFavorites.
+ */
+export function isHotBoardsScreen(lines: Lines): boolean {
+  return (
+    (lines[0] ?? '').startsWith('【看板列表】') &&
+    (lines[23] ?? '').trimStart().startsWith('看板列表')
+  );
+}
+
 // `>     1 ˇ LoL          遊戲 ◎ [LoL] 八強賽 DK BLG    HOTsamhou6/co…`
 // The category is double-width, so columns after it do not line up with string indexes; use a pattern.
 const ROW = /^([> ])\s*(\d+)\s+(ˇ\s+)?(\S+)\s+(\S+)\s+◎\s*(.*?)\s*$/;
