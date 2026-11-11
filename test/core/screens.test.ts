@@ -290,9 +290,16 @@ describe('article content', () => {
       '→ xxxu        : op                                              11/11 08:48',
       '噓 mayday840717: 這麼順風還能被噓                               11/11 08:53',
       '推 gaym19      : 多蘭沒爛到需要被他噴                           11/11 08:55',
+      '推 bob: unpadded                                                11/11 08:56',
     ]);
     expect(parsed.bodyLines.at(-1)).toContain('文章網址');
-    expect(parsed.pushes.map((p) => p.userId)).toEqual(['yuijen', 'xxxu', 'mayday840717', 'gaym19']);
+    expect(parsed.pushes.map((p) => p.userId)).toEqual([
+      'yuijen',
+      'xxxu',
+      'mayday840717',
+      'gaym19',
+      'bob',
+    ]);
     expect(parsed.pushes[0]).toEqual({
       kind: '噓',
       userId: 'yuijen',
